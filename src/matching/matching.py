@@ -11,7 +11,7 @@ KALSHI_CSV = "Data/kalshi_markets.csv"
 POLYMARKET_CSV = "Data/polymarket_markets.csv"
 OUTPUT_CSV = "Data/candidate_series_matches.csv"
 RANDOM_SEED = 42
-TEST_MODE = True
+TEST_MODE = False
 TEST_KALSHI_N = 1000
 TEST_POLY_N = 1000
 MAX_DATE_DIFF_DAYS = 45
@@ -87,8 +87,8 @@ def extract_district(text):
 
 
 def district_conflict_from_rows(krow, prow):
-    d1 = get_best_district(krow)
-    d2 = get_best_district(prow)
+    d1 = krow.get("district")
+    d2 = prow.get("district")
     return bool(d1 and d2 and d1 != d2)
 
 
@@ -119,10 +119,7 @@ def parse_status(series):
     return series.astype(str).str.lower().str.strip()
 
 
-def weighted_jaccard(text1: str, text2: str) -> float:
-    set1 = tokenize(text1)
-    set2 = tokenize(text2)
-
+def weighted_jaccard(set1: set, set2: set) -> float:
     if not set1 or not set2:
         return 0.0
 
@@ -169,10 +166,8 @@ def first_candidate_token(text):
     return toks[0] if toks else ""
 
 
-def shares_candidate_token(text1, text2):
-    s1 = tokenize(text1)
-    s2 = tokenize(text2)
-    return len(s1 & s2) > 0
+def shares_candidate_token(set1, set2):
+    return len(set1 & set2) > 0
 
 
 
@@ -281,6 +276,17 @@ def build_market_tables(kalshi_df, polymarket_df):
     print(f"Unique Kalshi markets: {len(kalshi_markets)}")
     print(f"Unique Polymarket markets: {len(polymarket_markets)}")
 
+    print("Pre-tokenizing columns...")
+    kalshi_markets["candidate_tokens"] = kalshi_markets["candidate_title_clean"].apply(tokenize)
+    kalshi_markets["series_tokens"] = kalshi_markets["series_title_clean"].apply(tokenize)
+    
+    polymarket_markets["candidate_tokens"] = polymarket_markets["candidate_title_clean"].apply(tokenize)
+    polymarket_markets["series_tokens"] = polymarket_markets["series_title_clean"].apply(tokenize)
+
+    print("Pre-computing districts...")
+    kalshi_markets["district"] = kalshi_markets.apply(get_best_district, axis=1)
+    polymarket_markets["district"] = polymarket_markets.apply(get_best_district, axis=1)
+
     return kalshi_markets, polymarket_markets
 
 
@@ -302,7 +308,7 @@ def generate_candidate_matches(kalshi_markets, polymarket_markets):
     poly_no_district = []
 
     for prow in poly_records:
-        d = get_best_district(prow)
+        d = prow.get("district")
         if d:
             poly_by_district.setdefault(d, []).append(prow)
         else:
@@ -317,7 +323,7 @@ def generate_candidate_matches(kalshi_markets, polymarket_markets):
     )
 
     for idx, krow in progress:
-        kd = get_best_district(krow)
+        kd = krow.get("district")
 
         if kd and kd in poly_by_district:
             candidate_pool = poly_by_district[kd] + poly_no_district
@@ -341,20 +347,20 @@ def generate_candidate_matches(kalshi_markets, polymarket_markets):
 
             if REQUIRE_SHARED_CANDIDATE_TOKEN:
                 if not shares_candidate_token(
-                    krow["candidate_title_clean"],
-                    prow["candidate_title_clean"]
+                    krow["candidate_tokens"],
+                    prow["candidate_tokens"]
                 ):
                     continue
             pairs_after_candidate_prefilter += 1
 
             market_score = weighted_jaccard(
-                krow["candidate_title_clean"],
-                prow["candidate_title_clean"]
+                krow["candidate_tokens"],
+                prow["candidate_tokens"]
             )
 
             series_score = weighted_jaccard(
-                krow["series_title_clean"],
-                prow["series_title_clean"]
+                krow["series_tokens"],
+                prow["series_tokens"]
             )
 
             if series_score < MIN_SERIES_SCORE:
@@ -365,12 +371,8 @@ def generate_candidate_matches(kalshi_markets, polymarket_markets):
             if score < MIN_COMBINED_SCORE:
                 continue
 
-            shared_candidate_words = sorted(
-                tokenize(krow["candidate_title_clean"]) & tokenize(prow["candidate_title_clean"])
-            )
-            shared_series_words = sorted(
-                tokenize(krow["series_title_clean"]) & tokenize(prow["series_title_clean"])
-            )
+            shared_candidate_words = sorted(krow["candidate_tokens"] & prow["candidate_tokens"])
+            shared_series_words = sorted(krow["series_tokens"] & prow["series_tokens"])
 
             matches.append({
                 "kalshi_series_ticker": krow["series_ticker"],
@@ -378,7 +380,7 @@ def generate_candidate_matches(kalshi_markets, polymarket_markets):
                 "kalshi_market_ticker": krow["market_ticker"],
                 "kalshi_market": krow["market_title"],
                 "kalshi_candidate_title_clean": krow["candidate_title_clean"],
-                "kalshi_district": get_best_district(krow),
+                "kalshi_district": krow.get("district"),
                 "kalshi_rules_text": krow.get("rules_text", ""),
                 "kalshi_rules_text_clean": krow.get("rules_text_clean", ""),
 
@@ -388,7 +390,7 @@ def generate_candidate_matches(kalshi_markets, polymarket_markets):
                 "polymarket_market": prow["market_title"],
                 "polymarket_group_item_title": prow.get("group_item_title", ""),
                 "polymarket_candidate_title_clean": prow["candidate_title_clean"],
-                "polymarket_district": get_best_district(prow),
+                "polymarket_district": prow.get("district"),
                 "polymarket_rules_text": prow.get("rules_text", ""),
                 "polymarket_rules_text_clean": prow.get("rules_text_clean", ""),
 

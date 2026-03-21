@@ -68,8 +68,8 @@ def main():
                 "status": m.get("status"),
                 "close_time": m.get("close_time"),
 
-                # inspect the raw payload and keep whatever rule-like fields exist
-                "rules_text": str(market_detail),
+                # extract clean rules
+                "rules_text": (market_detail.get("market", {}).get("rules_primary") or "") + "\n" + (market_detail.get("market", {}).get("rules_secondary") or ""),
                 "series_metadata": str(series_detail),
             })
 

@@ -77,9 +77,9 @@ def main():
                 "close_time": m.get("endDate") or m.get("endDateIso"),
 
                 # market-level + event-level metadata
-                "rules_text": parent_event.get("description"),
+                "rules_text": (m.get("description") or parent_event.get("description") or "") + "\nSpecific: " + (m.get("question") or ""),
                 "resolution_source": m.get("resolutionSource") or parent_event.get("resolutionSource"),
-                "subtitle": parent_event.get("subtitle"),
+                "subtitle": m.get("subtitle") or parent_event.get("subtitle"),
 
                 # useful for downstream dedupe / orderbook joins
                 "condition_id": m.get("conditionId"),

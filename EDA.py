@@ -9,7 +9,7 @@ df_p=pd.read_csv(r"Data/polymarket_markets.csv")
 #print(df_p.head())
 df_compare=df.filter(items=["kalshi_series","polymarket_series","score","date_diff_days"])
 df_rules=df.filter(items=["polymarket_rules_text","kalshi_rules_text"])
-print(df_rules.head())
+#print(df_rules.head())
 #print(df_compare.head())
 
 
@@ -24,27 +24,11 @@ print(df_rules.head())
 #print(df_rules["polymarket_rules_text"][15])
 #print(df_rules["kalshi_rules_text"][15])
 
-import ast
+# Cleaned up: data is now pre-cleaned by APIs
 
-def extract_kalshi_rules(raw_text):
-    if pd.isna(raw_text) or not str(raw_text).strip():
-        return ""
-
-    try:
-        obj = ast.literal_eval(raw_text)
-        market = obj.get("market", {})
-        rules_primary = market.get("rules_primary", "")
-        rules_secondary = market.get("rules_secondary", "")
-        subtitle = market.get("subtitle", "")
-
-        parts = [rules_primary, rules_secondary, subtitle]
-        parts = [p.strip() for p in parts if isinstance(p, str) and p.strip()]
-        return "\n".join(parts)
-    except Exception:
-        return ""
-
-df["kalshi_rules_extracted"] = df["kalshi_rules_text"].apply(extract_kalshi_rules)
-row = df.loc[1, ["kalshi_series", "polymarket_series",
+print(df_compare.head(30))
+df["kalshi_rules_extracted"] = df["kalshi_rules_text"]
+row = df.loc[3, ["kalshi_series", "polymarket_series",
                   "polymarket_rules_text", "kalshi_rules_extracted"]]
 print(row["kalshi_series"])
 print(row["polymarket_series"])
