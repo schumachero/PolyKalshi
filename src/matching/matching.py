@@ -19,6 +19,24 @@ MIN_COMBINED_SCORE = 0.35
 MIN_SERIES_SCORE = 0.15
 REQUIRE_SHARED_CANDIDATE_TOKEN = True
 
+
+
+NOTIFY_HIGH_CONFIDENCE_MATCHES = True
+NOTIFY_THRESHOLD = 0.85
+
+import os
+import sys
+project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+if project_root not in sys.path:
+    sys.path.append(project_root)
+
+try:
+    from src.notifications.telegram_bot import notify_arbitrage
+except ImportError:
+    # If not found, skip notification setup or define as a dummy
+    def notify_arbitrage(*args, **kwargs):
+        pass
+
 STOPWORDS = {
     "will", "would", "could", "should",
     "any", "anyone", "the", "a", "an",
@@ -374,7 +392,7 @@ def generate_candidate_matches(kalshi_markets, polymarket_markets):
             shared_candidate_words = sorted(krow["candidate_tokens"] & prow["candidate_tokens"])
             shared_series_words = sorted(krow["series_tokens"] & prow["series_tokens"])
 
-            matches.append({
+            match_entry = {
                 "kalshi_series_ticker": krow["series_ticker"],
                 "kalshi_series": krow["series_title"],
                 "kalshi_market_ticker": krow["market_ticker"],
@@ -400,7 +418,16 @@ def generate_candidate_matches(kalshi_markets, polymarket_markets):
                 "date_diff_days": date_diff_days,
                 "shared_candidate_words": ", ".join(shared_candidate_words),
                 "shared_series_words": ", ".join(shared_series_words),
-            })
+            }
+
+            # If it's a high-confidence match, send a telegram notification
+            if NOTIFY_HIGH_CONFIDENCE_MATCHES and score >= NOTIFY_THRESHOLD:
+                try:
+                    notify_arbitrage(match_entry) 
+                except Exception as e:
+                    print(f"Notification error: {e}")
+
+            matches.append(match_entry)
 
         if (idx + 1) % 25 == 0:
             progress.set_postfix({
