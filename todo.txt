@@ -1,0 +1,15 @@
+TODO 1.1 NOT SOLVED
+Currently, when the market has multiple sub markets, the polymarket csv rules show to top level rule, for example:
+for example, see EDA:
+
+POLYMARKET RULES:
+This market will resolve according to the candidate who wins the nomination for the Democratic Party to contest the NY-15 congressional district seat in the U.S. House of Representatives in the 2026 midterm elections. The Democratic primary will take place on June 23, 2026.
+
+If no nominee is announced by November 3, 2026, 11:59PM ET, this market will resolve to "Other".
+
+The resolution source for this market will be a consensus of official Democrat sources, including https://democrats.org/.
+
+Any replacement of the nominee before election day will not change the resolution of the market.
+
+KALSHI RULES:
+If Michael Blake wins the nomination for the Democratic Party to contest the 2026 NY-15 House seat, then the market resolves to Yes.
