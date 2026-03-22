@@ -91,16 +91,16 @@ def notify_arbitrage(match_details: Dict[str, Any]):
     message = format_arbitrage_message(match_details)
     return send_telegram_message(message)
 
-if __name__ == "__main__":
+# if __name__ == "__main__":
 
-    test_match = {
-        "kalshi_market": "Will the Democrats win the NY-15 House seat?",
-        "polymarket_market": "New York District 15: Democratic Party wins?",
-        "combined_score": 0.95,
-        "kalshi_market_ticker": "HOUSE-26-NY-15",
-        "polymarket_market_slug": "ny-house-district-15-dem-nominee",
-        "kalshi_price": 0.45,
-        "polymarket_price": 0.52,
-        "arb_impact": 3.0
-    }
-    notify_arbitrage(test_match)
+#     test_match = {
+#         "kalshi_market": "Will the Democrats win the NY-15 House seat?",
+#         "polymarket_market": "New York District 15: Democratic Party wins?",
+#         "combined_score": 0.95,
+#         "kalshi_market_ticker": "HOUSE-26-NY-15",
+#         "polymarket_market_slug": "ny-house-district-15-dem-nominee",
+#         "kalshi_price": 0.45,
+#         "polymarket_price": 0.52,
+#         "arb_impact": 3.0
+#     }
+#     notify_arbitrage(test_match)

@@ -1,6 +1,7 @@
 import requests
 import pandas as pd
 import json
+import concurrent.futures
 
 KALSHI_BASE = "https://api.elections.kalshi.com/trade-api/v2"
 POLYMARKET_GAMMA = "https://gamma-api.polymarket.com"
@@ -111,19 +112,26 @@ def get_polymarket_orderbook(market_ticker, levels=20):
             "asks": parse_array(asks_raw, is_bid=False)
         }
 
-    return {
-        "yes": fetch_clob_book(yes_token),
-        "no": fetch_clob_book(no_token)
-    }
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+        yes_future = executor.submit(fetch_clob_book, yes_token)
+        no_future = executor.submit(fetch_clob_book, no_token)
+        return {
+            "yes": yes_future.result(),
+            "no": no_future.result()
+        }
 
 def get_matched_orderbooks(kalshi_ticker, polymarket_ticker, levels=20):
     """
     Returns structured data containing orderbook levels from both platforms.
     """
-    return {
-        "kalshi": get_kalshi_orderbook(kalshi_ticker, levels=levels),
-        "polymarket": get_polymarket_orderbook(polymarket_ticker, levels=levels)
-    }
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+        k_future = executor.submit(get_kalshi_orderbook, kalshi_ticker, levels)
+        p_future = executor.submit(get_polymarket_orderbook, polymarket_ticker, levels)
+        
+        return {
+            "kalshi": k_future.result(),
+            "polymarket": p_future.result()
+        }
 
 def test():
     """Simple test utilizing the matches CSV."""

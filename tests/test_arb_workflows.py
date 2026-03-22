@@ -4,6 +4,7 @@ import json
 import time
 import argparse
 import pandas as pd
+import concurrent.futures
 
 # Ensure the root directory is in sys.path
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -91,7 +92,7 @@ def run_semantic_matches_test(limit=50):
     except Exception as e:
         print(f"Error during semantic matches test: {e}")
 
-def run_llm_predicted_matches_test():
+def run_llm_predicted_matches_test(limit=None):
     """Reads predicted_equivalent_markets.csv, fetches orderbooks, and checks arb potential below $0.96."""
     try:
         df = pd.read_csv("Data/predicted_equivalent_markets.csv")
@@ -99,30 +100,64 @@ def run_llm_predicted_matches_test():
             print("Predicted Matches CSV empty. Cannot test.")
             return
             
+        if limit and limit > 0:
+            df = df.head(limit)
+            
         print(f"\n--- Testing LLM Predicted Matches for Deep Arbitrage (< $0.96) ---")
-        matches_found = 0
         total = len(df)
+        print(f"Fetching {total} markets concurrently. This should be lightning fast...")
         
-        for idx, row in df.iterrows():
+        arbs_list = []
+        
+        def process_row(row):
             k_tick = str(row["kalshi_market_ticker"]).strip()
             p_tick = str(row["polymarket_market_ticker"]).strip()
             k_title = str(row.get("kalshi_market", k_tick)).strip().replace('\n', ' ').replace('\r', '')
             p_title = str(row.get("polymarket_market", p_tick)).strip().replace('\n', ' ').replace('\r', '')
             
-            obs = get_matched_orderbooks(k_tick, p_tick, levels=5)
-            best = get_best_combo_price(obs)
-            
-            if best and 0.80 <= best["price"] <= 0.96:
-                print(f"\n[DEEP ARB FOUND!]")
-                print(f"Kalshi: {k_title} ({k_tick})")
-                print(f"Polymarket: {p_title} ({p_tick})")
-                print(f"-> Price: ${best['price']} ({best['strategy']})")
-                matches_found += 1
+            try:
+                obs = get_matched_orderbooks(k_tick, p_tick, levels=5)
+                best = get_best_combo_price(obs)
                 
-            time.sleep(0.2)
+                if best and 0.80 <= best["price"] <= 0.96:
+                    return {
+                        "kalshi_market_ticker": k_tick,
+                        "kalshi_series_ticker": row.get("kalshi_series_ticker", ""),
+                        "kalshi_market": k_title,
+                        "polymarket_market_ticker": p_tick,
+                        "polymarket_series_ticker": row.get("polymarket_series_ticker", ""),
+                        "polymarket_market": p_title,
+                        "price": best["price"],
+                        "strategy": best["strategy"]
+                    }
+            except Exception as e:
+                pass
+            return None
+            
+        with concurrent.futures.ThreadPoolExecutor(max_workers=20) as executor:
+            rows_to_process = [row for _, row in df.iterrows()]
+            futures = [executor.submit(process_row, r) for r in rows_to_process]
+            
+            matches_found = 0
+            for future in concurrent.futures.as_completed(futures):
+                res = future.result()
+                if res:
+                    print(f"\n[DEEP ARB FOUND!]")
+                    print(f"Kalshi: {res['kalshi_market']} ({res['kalshi_market_ticker']})")
+                    print(f"Polymarket: {res['polymarket_market']} ({res['polymarket_market_ticker']})")
+                    print(f"-> Price: ${res['price']} ({res['strategy']})")
+                    arbs_list.append(res)
+                    matches_found += 1
             
         print(f"\nDone. Found {matches_found} potential arbs below $0.96 out of {total}.")
         
+        if arbs_list:
+            out_df = pd.DataFrame(arbs_list)
+            out_df.sort_values(by="price", inplace=True)
+            out_path = "Data/llm_deep_arbs.csv"
+            out_df.to_csv(out_path, index=False)
+            print(f"Saved sorted arbitrages to {out_path}")
+            
     except FileNotFoundError:
         print("Data/predicted_equivalent_markets.csv not found.")
     except Exception as e:
@@ -178,7 +213,7 @@ def main():
         run_semantic_matches_test(limit=limit)
 
     if test_choice in ["llm", "all"]:
-        run_llm_predicted_matches_test()
+        run_llm_predicted_matches_test(limit=limit)
 
 if __name__ == "__main__":
     main()
