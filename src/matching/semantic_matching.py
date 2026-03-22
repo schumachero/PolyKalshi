@@ -22,6 +22,15 @@ def generate_semantic_matches(kalshi_df, polymarket_df, title_col_kalshi='market
     kalshi_df = kalshi_df.copy()
     polymarket_df = polymarket_df.copy()
     
+    # Filter closed/finished markets
+    if "status" in kalshi_df.columns:
+        kalshi_df["status"] = kalshi_df["status"].astype(str).str.lower().str.strip()
+        kalshi_df = kalshi_df[~kalshi_df["status"].isin(["finalized", "settled"])]
+        
+    if "status" in polymarket_df.columns:
+        polymarket_df["status"] = polymarket_df["status"].astype(str).str.lower().str.strip()
+        polymarket_df = polymarket_df[polymarket_df["status"] == "active"]
+
     kalshi_df[title_col_kalshi] = kalshi_df[title_col_kalshi].fillna("")
     polymarket_df[title_col_poly] = polymarket_df[title_col_poly].fillna("")
     
