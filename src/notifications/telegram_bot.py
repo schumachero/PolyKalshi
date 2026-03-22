@@ -1,19 +1,27 @@
+import os
 import requests
 import json
 import logging
 from typing import Dict, Any
+from pathlib import Path
+from dotenv import load_dotenv
 
-TELEGRAM_TOKEN = "8671494408:AAFPfLQQNWIi2EOhlk1laa-Fn2Gcyj4TrMA"
-TELEGRAM_CHAT_ID = "-5247934511"
-# try:
-#     from config import TELEGRAM_TOKEN, TELEGRAM_CHAT_ID
-# except ImportError:
-#     TELEGRAM_TOKEN = None
-#     TELEGRAM_CHAT_ID = None
 
+env_path = Path(__file__).resolve().parents[2] / ".env"
+load_dotenv(dotenv_path=env_path) 
+
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+print(TELEGRAM_CHAT_ID)
+print(TELEGRAM_TOKEN)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
+    logger.error("Could not load Telegram settings from .env!")
+    raise  ValueError("Could not load Telegram settings from .env!")
+    
 
 def send_telegram_message(text: str):
 
