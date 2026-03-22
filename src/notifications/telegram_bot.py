@@ -12,15 +12,11 @@ load_dotenv(dotenv_path=env_path)
 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
-print(TELEGRAM_CHAT_ID)
-print(TELEGRAM_TOKEN)
-
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
-    logger.error("Could not load Telegram settings from .env!")
-    raise  ValueError("Could not load Telegram settings from .env!")
+    logger.warning("Telegram settings (TELEGRAM_TOKEN/TELEGRAM_CHAT_ID) not found in .env. Notifications will be disabled.")
     
 
 def send_telegram_message(text: str):
