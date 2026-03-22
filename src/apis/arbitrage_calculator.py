@@ -154,6 +154,55 @@ def quick_check_arbitrage(orderbooks, threshold=0.95, poly_fee_rate=0.0):
             
     return False
 
+def get_best_combo_price(orderbooks, poly_fee_rate=0.0):
+    """
+    Checks the first level of the orderbooks and returns the lowest combined 
+    marginal price for buying 1 unit of a paired market.
+    """
+    if not orderbooks:
+        return None
+        
+    kalshi = orderbooks.get("kalshi", {})
+    poly = orderbooks.get("polymarket", {})
+    
+    best_price = float('inf')
+    best_strategy = None
+    
+    # Strategy 1: Buy YES on Kalshi AND NO on Polymarket
+    k_yes_asks = kalshi.get("yes", {}).get("asks", [])
+    p_no_asks = poly.get("no", {}).get("asks", [])
+    
+    if k_yes_asks and p_no_asks:
+        k_price = k_yes_asks[0]["price"]
+        p_price = p_no_asks[0]["price"]
+        k_fee = calculate_kalshi_marginal_fee(k_price)
+        p_fee = calculate_poly_marginal_fee(p_price, poly_fee_rate)
+        total = k_price + k_fee + p_price + p_fee
+        if total < best_price:
+            best_price = total
+            best_strategy = "Buy Kalshi YES / Poly NO"
+
+    # Strategy 2: Buy NO on Kalshi AND YES on Polymarket
+    k_no_asks = kalshi.get("no", {}).get("asks", [])
+    p_yes_asks = poly.get("yes", {}).get("asks", [])
+    
+    if k_no_asks and p_yes_asks:
+        k_price = k_no_asks[0]["price"]
+        p_price = p_yes_asks[0]["price"]
+        k_fee = calculate_kalshi_marginal_fee(k_price)
+        p_fee = calculate_poly_marginal_fee(p_price, poly_fee_rate)
+        total = k_price + k_fee + p_price + p_fee
+        if total < best_price:
+            best_price = total
+            best_strategy = "Buy Kalshi NO / Poly YES"
+            
+    if best_price == float('inf'):
+        return None
+        
+    return {
+        "price": round(best_price, 4),
+        "strategy": best_strategy
+    }
 
 def calculate_arbitrage(orderbooks, price_threshold=1.10, poly_fee_rate=0.0):
     """
@@ -182,62 +231,3 @@ def calculate_arbitrage(orderbooks, price_threshold=1.10, poly_fee_rate=0.0):
     )
 
     return results
-
-
-def test_calculator():
-    """Simple test to demonstrate Orderbook Merging calculations."""
-    try:
-        import pandas as pd
-        import os
-        import sys
-        import json
-        
-        # Add src base path to sys path to simulate correct runtime env
-        current_dir = os.path.dirname(os.path.abspath(__file__))
-        src_dir = os.path.dirname(os.path.dirname(current_dir))
-        if src_dir not in sys.path:
-            sys.path.append(src_dir)
-            
-        from src.apis.orderbook import get_matched_orderbooks
-        
-        df = pd.read_csv("Data/candidate_series_matches.csv")
-        if df.empty:
-            print("Matches CSV empty. Cannot test.")
-            return
-            
-        first = df.iloc[0]
-        k_tick = first["kalshi_market_ticker"]
-        p_tick = first["polymarket_market_ticker"]
-        
-        print(f"Testing Arbitrage Merged Book logic for:")
-        print(f"Kalshi: {k_tick}")
-        print(f"Polymarket: {p_tick}")
-        print("-" * 50)
-        
-        # We fetch 20 levels
-        obs = get_matched_orderbooks(k_tick, p_tick, levels=20)
-        
-        # Calculate exactly how much we can buy without paying > 1.10 per paired contract
-        threshold = 1.10
-        results = calculate_arbitrage(obs, price_threshold=threshold)
-        
-        print(f"\nMax volume available below ${threshold} marginal cost:")
-        print(json.dumps(results, indent=2))
-        
-        # Test Quick Check
-        quick_strict = quick_check_arbitrage(obs, threshold=0.95)
-        quick_loose = quick_check_arbitrage(obs, threshold=1.50)
-        
-        print("\n--- Quick Check Tests ---")
-        print(f"Quick check with strict threshold (0.95): {quick_strict}")
-        print(f"Quick check with loose threshold (1.50): {quick_loose}")
-        
-    except FileNotFoundError:
-        print("Matches CSV not found. Ensure you have run matching phase first.")
-    except ImportError as e:
-        print(f"Import error during test: {e}")
-    except Exception as e:
-        print(f"Unexpected error: {e}")
-
-if __name__ == "__main__":
-    test_calculator()
