@@ -35,23 +35,6 @@ Rules:
 - Obvious name variants are the same person, e.g. Trump = Donald Trump, Putin = Vladimir Putin.
 - Physical presence in a country is not the same as holding state power there.
 - Focus only on whether the YES-resolution event is the same.
-
-Examples:
-Contract A: Trump meets Putin before Jan 1, 2027.
-Contract B: Donald Trump meets Vladimir Putin during 2026.
-Answer: 1
-
-Contract A: Reza Pahlavi enters Iran by July 1, 2026.
-Contract B: Reza Pahlavi holds state power in Iran by Dec 31, 2026.
-Answer: 0
-
-Contract A: Trump pardons Elizabeth Holmes by Dec 31, 2026.
-Contract B: Elizabeth Holmes receives pardon, commutation, or reprieve from Trump before 2027.
-Answer: 1
-
-Contract A: Trump meets Kim anytime in 2026.
-Contract B: Trump meets Kim only in March 2026.
-Answer: 0
 """
 TOKENS = False
 HF_TOKEN = "HF"
