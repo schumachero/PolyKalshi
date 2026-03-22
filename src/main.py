@@ -9,6 +9,8 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from apis.kalshi_api import main as run_kalshi_api
 from apis.polymarket_api import main as run_polymarket_api
 from matching.matching import main as run_matching
+from orderbook_fetcher import main as run_fetcher
+from arbitrage_calculator import calculate_arbitrage as run_calculator
 
 # Configuration
 KALSHI_CSV = "Data/kalshi_markets.csv"
@@ -48,6 +50,12 @@ def main():
         
     print("\n--- RUNNING MATCHING ---")
     run_matching()
+    
+    print("\n--- RUNNING ORDERBOOK FETCHER ---")
+    run_fetcher()
+    
+    print("\n--- RUNNING ARBITRAGE CALCULATOR ---")
+    run_calculator()
     
     print("\n=== ORCHESTRATOR DONE ===")
 

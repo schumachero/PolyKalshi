@@ -19,11 +19,6 @@ MIN_COMBINED_SCORE = 0.35
 MIN_SERIES_SCORE = 0.15
 REQUIRE_SHARED_CANDIDATE_TOKEN = True
 
-
-
-NOTIFY_HIGH_CONFIDENCE_MATCHES = True
-NOTIFY_THRESHOLD = 0.85
-
 import os
 import sys
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
@@ -31,11 +26,14 @@ if project_root not in sys.path:
     sys.path.append(project_root)
 
 try:
-    from src.notifications.telegram_bot import notify_arbitrage
+    from notifications.telegram_bot import notify_arbitrage
 except ImportError:
-    # If not found, skip notification setup or define as a dummy
-    def notify_arbitrage(*args, **kwargs):
-        pass
+    try:
+        from src.notifications.telegram_bot import notify_arbitrage
+    except ImportError:
+        # If not found, skip notification setup or define as a dummy
+        def notify_arbitrage(*args, **kwargs):
+            pass
 
 STOPWORDS = {
     "will", "would", "could", "should",
@@ -420,13 +418,7 @@ def generate_candidate_matches(kalshi_markets, polymarket_markets):
                 "shared_series_words": ", ".join(shared_series_words),
             }
 
-            # If it's a high-confidence match, send a telegram notification
-            if NOTIFY_HIGH_CONFIDENCE_MATCHES and score >= NOTIFY_THRESHOLD:
-                try:
-                    notify_arbitrage(match_entry) 
-                except Exception as e:
-                    print(f"Notification error: {e}")
-
+            # matches.append(match_entry) # Moved out of loop for clarity in some versions, but here it's fine.
             matches.append(match_entry)
 
         if (idx + 1) % 25 == 0:
