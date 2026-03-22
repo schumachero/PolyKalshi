@@ -66,16 +66,16 @@ def run_semantic_matches_test(limit=50):
         matches_found = 0
         
         for idx, row in top_n.iterrows():
-            k_tick = row["kalshi_market_ticker"]
-            p_tick = row["polymarket_market_ticker"]
-            k_title = row.get("kalshi_market", k_tick)
-            p_title = row.get("polymarket_market", p_tick)
+            k_tick = str(row["kalshi_market_ticker"]).strip()
+            p_tick = str(row["polymarket_market_ticker"]).strip()
+            k_title = str(row.get("kalshi_market", k_tick)).strip().replace('\n', ' ').replace('\r', '')
+            p_title = str(row.get("polymarket_market", p_tick)).strip().replace('\n', ' ').replace('\r', '')
             score = row.get("semantic_score", 0)
             
             obs = get_matched_orderbooks(k_tick, p_tick, levels=5)
             best = get_best_combo_price(obs)
             
-            if best and best["price"] <= 1.30:
+            if best and 0.80 <= best["price"] <= 1.30:
                 print(f"\n[MATCH FOUND! Score: {score}]")
                 print(f"Kalshi: {k_title} ({k_tick})")
                 print(f"Polymarket: {p_title} ({p_tick})")
@@ -91,12 +91,49 @@ def run_semantic_matches_test(limit=50):
     except Exception as e:
         print(f"Error during semantic matches test: {e}")
 
+def run_llm_predicted_matches_test():
+    """Reads predicted_equivalent_markets.csv, fetches orderbooks, and checks arb potential below $0.96."""
+    try:
+        df = pd.read_csv("Data/predicted_equivalent_markets.csv")
+        if df.empty:
+            print("Predicted Matches CSV empty. Cannot test.")
+            return
+            
+        print(f"\n--- Testing LLM Predicted Matches for Deep Arbitrage (< $0.96) ---")
+        matches_found = 0
+        total = len(df)
+        
+        for idx, row in df.iterrows():
+            k_tick = str(row["kalshi_market_ticker"]).strip()
+            p_tick = str(row["polymarket_market_ticker"]).strip()
+            k_title = str(row.get("kalshi_market", k_tick)).strip().replace('\n', ' ').replace('\r', '')
+            p_title = str(row.get("polymarket_market", p_tick)).strip().replace('\n', ' ').replace('\r', '')
+            
+            obs = get_matched_orderbooks(k_tick, p_tick, levels=5)
+            best = get_best_combo_price(obs)
+            
+            if best and 0.80 <= best["price"] <= 0.96:
+                print(f"\n[DEEP ARB FOUND!]")
+                print(f"Kalshi: {k_title} ({k_tick})")
+                print(f"Polymarket: {p_title} ({p_tick})")
+                print(f"-> Price: ${best['price']} ({best['strategy']})")
+                matches_found += 1
+                
+            time.sleep(0.2)
+            
+        print(f"\nDone. Found {matches_found} potential arbs below $0.96 out of {total}.")
+        
+    except FileNotFoundError:
+        print("Data/predicted_equivalent_markets.csv not found.")
+    except Exception as e:
+        print(f"Error during LLM predicted matches test: {e}")
+
 def main():
     import sys
     # If arguments are provided, use argparse
     if len(sys.argv) > 1:
         parser = argparse.ArgumentParser(description="Standalone Test Runner for PolyKalshi Arbitrage Workflows")
-        parser.add_argument("--test", choices=["candidate", "semantic", "all"], required=True, help="Which test to run")
+        parser.add_argument("--test", choices=["candidate", "semantic", "llm", "all"], required=True, help="Which test to run")
         parser.add_argument("--limit", type=int, default=50, help="Limit of matches for the semantic test")
         
         args = parser.parse_args()
@@ -107,10 +144,11 @@ def main():
         print("\n=== PolyKalshi Arbitrage Test Runner ===")
         print("1. Run Candidate Merging Test (tests first match from candidate_series_matches.csv)")
         print("2. Run Top Semantic Matches Test (tests N matches from semantic_matches.csv)")
-        print("3. Run All Tests")
-        print("4. Exit")
+        print("3. Run LLM Predicted Matches Test (tests < $0.96 arb on predicted_equivalent_markets.csv)")
+        print("4. Run All Tests")
+        print("5. Exit")
         
-        choice = input("\nSelect an option (1-4): ").strip()
+        choice = input("\nSelect an option (1-5): ").strip()
         
         limit = 50
         if choice == '1':
@@ -123,8 +161,10 @@ def main():
             except ValueError:
                 print("Invalid input, using default limit of 50.")
         elif choice == '3':
-            test_choice = 'all'
+            test_choice = 'llm'
         elif choice == '4':
+            test_choice = 'all'
+        elif choice == '5':
             print("Exiting.")
             sys.exit(0)
         else:
@@ -136,6 +176,9 @@ def main():
         
     if test_choice in ["semantic", "all"]:
         run_semantic_matches_test(limit=limit)
+
+    if test_choice in ["llm", "all"]:
+        run_llm_predicted_matches_test()
 
 if __name__ == "__main__":
     main()
