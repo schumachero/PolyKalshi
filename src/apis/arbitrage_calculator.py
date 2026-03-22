@@ -116,6 +116,45 @@ def find_arbitrage_volume(kalshi_asks, poly_asks, price_threshold=1.10, poly_fee
     }
 
 
+def quick_check_arbitrage(orderbooks, threshold=0.95, poly_fee_rate=0.0):
+    """
+    Quickly checks if the best available prices on the first level of the orderbooks 
+    (including fees) offer an arbitrage opportunity below the given threshold.
+    Returns True if an opportunity exists, False otherwise.
+    """
+    if not orderbooks:
+        return False
+        
+    kalshi = orderbooks.get("kalshi", {})
+    poly = orderbooks.get("polymarket", {})
+    
+    # Strategy 1: Buy YES on Kalshi AND NO on Polymarket
+    k_yes_asks = kalshi.get("yes", {}).get("asks", [])
+    p_no_asks = poly.get("no", {}).get("asks", [])
+    
+    if k_yes_asks and p_no_asks:
+        k_price = k_yes_asks[0]["price"]
+        p_price = p_no_asks[0]["price"]
+        k_fee = calculate_kalshi_marginal_fee(k_price)
+        p_fee = calculate_poly_marginal_fee(p_price, poly_fee_rate)
+        if (k_price + k_fee + p_price + p_fee) < threshold:
+            return True
+
+    # Strategy 2: Buy NO on Kalshi AND YES on Polymarket
+    k_no_asks = kalshi.get("no", {}).get("asks", [])
+    p_yes_asks = poly.get("yes", {}).get("asks", [])
+    
+    if k_no_asks and p_yes_asks:
+        k_price = k_no_asks[0]["price"]
+        p_price = p_yes_asks[0]["price"]
+        k_fee = calculate_kalshi_marginal_fee(k_price)
+        p_fee = calculate_poly_marginal_fee(p_price, poly_fee_rate)
+        if (k_price + k_fee + p_price + p_fee) < threshold:
+            return True
+            
+    return False
+
+
 def calculate_arbitrage(orderbooks, price_threshold=1.10, poly_fee_rate=0.0):
     """
     Evaluates both directional strategies to find executable volume below the price threshold.
@@ -184,6 +223,14 @@ def test_calculator():
         
         print(f"\nMax volume available below ${threshold} marginal cost:")
         print(json.dumps(results, indent=2))
+        
+        # Test Quick Check
+        quick_strict = quick_check_arbitrage(obs, threshold=0.95)
+        quick_loose = quick_check_arbitrage(obs, threshold=1.50)
+        
+        print("\n--- Quick Check Tests ---")
+        print(f"Quick check with strict threshold (0.95): {quick_strict}")
+        print(f"Quick check with loose threshold (1.50): {quick_loose}")
         
     except FileNotFoundError:
         print("Matches CSV not found. Ensure you have run matching phase first.")
