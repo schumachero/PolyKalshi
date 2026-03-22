@@ -1,0 +1,141 @@
+import os
+import sys
+import json
+import time
+import argparse
+import pandas as pd
+
+# Ensure the root directory is in sys.path
+current_dir = os.path.dirname(os.path.abspath(__file__))
+src_dir = os.path.dirname(current_dir)
+if src_dir not in sys.path:
+    sys.path.append(src_dir)
+
+from src.apis.orderbook import get_matched_orderbooks
+from src.apis.arbitrage_calculator import calculate_arbitrage, quick_check_arbitrage, get_best_combo_price
+
+def run_candidate_matches_test():
+    """Simple test to demonstrate Orderbook Merging calculations on top candidate match."""
+    try:
+        df = pd.read_csv("Data/candidate_series_matches.csv")
+        if df.empty:
+            print("Matches CSV empty. Cannot test.")
+            return
+            
+        first = df.iloc[0]
+        k_tick = first["kalshi_market_ticker"]
+        p_tick = first["polymarket_market_ticker"]
+        
+        print(f"Testing Arbitrage Merged Book logic for:")
+        print(f"Kalshi: {k_tick}")
+        print(f"Polymarket: {p_tick}")
+        print("-" * 50)
+        
+        obs = get_matched_orderbooks(k_tick, p_tick, levels=20)
+        
+        threshold = 1.10
+        results = calculate_arbitrage(obs, price_threshold=threshold)
+        
+        print(f"\nMax volume available below ${threshold} marginal cost:")
+        print(json.dumps(results, indent=2))
+        
+        # Test Quick Check
+        quick_strict = quick_check_arbitrage(obs, threshold=0.95)
+        quick_loose = quick_check_arbitrage(obs, threshold=1.50)
+        
+        print("\n--- Quick Check Tests ---")
+        print(f"Quick check with strict threshold (0.95): {quick_strict}")
+        print(f"Quick check with loose threshold (1.50): {quick_loose}")
+        
+    except FileNotFoundError:
+        print("Matches CSV not found. Ensure you have run matching phase first.")
+    except Exception as e:
+        print(f"Unexpected error: {e}")
+
+def run_semantic_matches_test(limit=50):
+    """Reads top N semantic matches, fetches orderbooks, and checks arb potential."""
+    try:
+        df = pd.read_csv("Data/semantic_matches.csv")
+        if df.empty:
+            print("Matches CSV empty. Cannot test.")
+            return
+            
+        top_n = df.head(limit)
+        
+        print(f"\n--- Testing Top {limit} Semantic Matches for Arbitrage (< $1.30) ---")
+        matches_found = 0
+        
+        for idx, row in top_n.iterrows():
+            k_tick = row["kalshi_market_ticker"]
+            p_tick = row["polymarket_market_ticker"]
+            k_title = row.get("kalshi_market", k_tick)
+            p_title = row.get("polymarket_market", p_tick)
+            score = row.get("semantic_score", 0)
+            
+            obs = get_matched_orderbooks(k_tick, p_tick, levels=5)
+            best = get_best_combo_price(obs)
+            
+            if best and best["price"] <= 1.30:
+                print(f"\n[MATCH FOUND! Score: {score}]")
+                print(f"Kalshi: {k_title} ({k_tick})")
+                print(f"Polymarket: {p_title} ({p_tick})")
+                print(f"-> Price: ${best['price']} ({best['strategy']})")
+                matches_found += 1
+                
+            time.sleep(0.2)
+            
+        print(f"\nDone. Found {matches_found} potential arbs below $1.30 out of {limit}.")
+        
+    except FileNotFoundError:
+        print("Data/semantic_matches.csv not found.")
+    except Exception as e:
+        print(f"Error during semantic matches test: {e}")
+
+def main():
+    import sys
+    # If arguments are provided, use argparse
+    if len(sys.argv) > 1:
+        parser = argparse.ArgumentParser(description="Standalone Test Runner for PolyKalshi Arbitrage Workflows")
+        parser.add_argument("--test", choices=["candidate", "semantic", "all"], required=True, help="Which test to run")
+        parser.add_argument("--limit", type=int, default=50, help="Limit of matches for the semantic test")
+        
+        args = parser.parse_args()
+        test_choice = args.test
+        limit = args.limit
+    else:
+        # Interactive mode
+        print("\n=== PolyKalshi Arbitrage Test Runner ===")
+        print("1. Run Candidate Merging Test (tests first match from candidate_series_matches.csv)")
+        print("2. Run Top Semantic Matches Test (tests N matches from semantic_matches.csv)")
+        print("3. Run All Tests")
+        print("4. Exit")
+        
+        choice = input("\nSelect an option (1-4): ").strip()
+        
+        limit = 50
+        if choice == '1':
+            test_choice = 'candidate'
+        elif choice == '2':
+            test_choice = 'semantic'
+            try:
+                limit_input = input("How many semantic matches to test? (default: 50): ").strip()
+                limit = int(limit_input) if limit_input else 50
+            except ValueError:
+                print("Invalid input, using default limit of 50.")
+        elif choice == '3':
+            test_choice = 'all'
+        elif choice == '4':
+            print("Exiting.")
+            sys.exit(0)
+        else:
+            print("Invalid choice. Exiting.")
+            sys.exit(1)
+            
+    if test_choice in ["candidate", "all"]:
+        run_candidate_matches_test()
+        
+    if test_choice in ["semantic", "all"]:
+        run_semantic_matches_test(limit=limit)
+
+if __name__ == "__main__":
+    main()

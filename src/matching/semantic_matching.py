@@ -73,12 +73,14 @@ def generate_semantic_matches(kalshi_df, polymarket_df, title_col_kalshi='market
                 match_dict = {
                     "kalshi_series_ticker": k_row.get("series_ticker", ""),
                     "kalshi_market_ticker": k_row.get("market_ticker", ""),
-                    "kalshi_market_title": k_titles[i],
-                    "kalshi_rules": k_row.get("rules_text", ""),
+                    "kalshi_market": k_titles[i],
+                    "kalshi_candidate_title_clean": k_titles[i],
+                    "kalshi_rules_text": k_row.get("rules_text", ""),
                     "polymarket_series_ticker": p_row.get("series_ticker", ""),
                     "polymarket_market_ticker": p_row.get("market_ticker", ""),
-                    "polymarket_market_title": p_titles[idx_val],
-                    "polymarket_rules": p_row.get("rules_text", ""),
+                    "polymarket_market": p_titles[idx_val],
+                    "polymarket_candidate_title_clean": p_titles[idx_val],
+                    "polymarket_rules_text": p_row.get("rules_text", ""),
                     "semantic_score": round(s_val, 4)
                 }
                 matches_list.append(match_dict)
