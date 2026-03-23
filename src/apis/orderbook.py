@@ -3,11 +3,29 @@ import pandas as pd
 import json
 import concurrent.futures
 
+# =========================
+# Configuration
+# =========================
+
+# API base URLs
 KALSHI_BASE = "https://api.elections.kalshi.com/trade-api/v2"
 POLYMARKET_GAMMA = "https://gamma-api.polymarket.com"
 POLYMARKET_CLOB = "https://clob.polymarket.com"
 
-def get_kalshi_orderbook(market_ticker, levels=20):
+# Default number of orderbook price levels to fetch
+DEFAULT_LEVELS = 20
+
+# HTTP request timeout in seconds
+REQUEST_TIMEOUT = 10
+
+# Thread pool workers for concurrent fetching
+THREAD_POOL_WORKERS = 2
+
+# =========================
+# Orderbook Functions
+# =========================
+
+def get_kalshi_orderbook(market_ticker, levels=DEFAULT_LEVELS):
     """
     Fetches the top orderbook levels (bids and asks) for YES and NO from Kalshi.
     Kalshi provides "yes_dollars" (Yes Bids) and "no_dollars" (No Bids).
@@ -15,7 +33,7 @@ def get_kalshi_orderbook(market_ticker, levels=20):
     """
     url = f"{KALSHI_BASE}/markets/{market_ticker}/orderbook"
     try:
-        r = requests.get(url, timeout=10)
+        r = requests.get(url, timeout=REQUEST_TIMEOUT)
         r.raise_for_status()
         data = r.json()
     except Exception as e:
@@ -60,12 +78,12 @@ def get_kalshi_orderbook(market_ticker, levels=20):
         }
     }
 
-def get_polymarket_orderbook(market_ticker, levels=20):
+def get_polymarket_orderbook(market_ticker, levels=DEFAULT_LEVELS):
     """
     Fetches the market details to get token IDs, then fetches both bids and asks from CLOB.
     """
     try:
-        m_r = requests.get(f"{POLYMARKET_GAMMA}/markets/{market_ticker}", timeout=10)
+        m_r = requests.get(f"{POLYMARKET_GAMMA}/markets/{market_ticker}", timeout=REQUEST_TIMEOUT)
         m_r.raise_for_status()
         market_data = m_r.json()
     except Exception as e:
@@ -88,7 +106,7 @@ def get_polymarket_orderbook(market_ticker, levels=20):
     def fetch_clob_book(token_id):
         url = f"{POLYMARKET_CLOB}/book?token_id={token_id}"
         try:
-            r = requests.get(url, timeout=10)
+            r = requests.get(url, timeout=REQUEST_TIMEOUT)
             r.raise_for_status()
             data = r.json()
             bids_raw = data.get("bids", [])
@@ -112,7 +130,7 @@ def get_polymarket_orderbook(market_ticker, levels=20):
             "asks": parse_array(asks_raw, is_bid=False)
         }
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+    with concurrent.futures.ThreadPoolExecutor(max_workers=THREAD_POOL_WORKERS) as executor:
         yes_future = executor.submit(fetch_clob_book, yes_token)
         no_future = executor.submit(fetch_clob_book, no_token)
         return {
@@ -120,11 +138,11 @@ def get_polymarket_orderbook(market_ticker, levels=20):
             "no": no_future.result()
         }
 
-def get_matched_orderbooks(kalshi_ticker, polymarket_ticker, levels=20):
+def get_matched_orderbooks(kalshi_ticker, polymarket_ticker, levels=DEFAULT_LEVELS):
     """
     Returns structured data containing orderbook levels from both platforms.
     """
-    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+    with concurrent.futures.ThreadPoolExecutor(max_workers=THREAD_POOL_WORKERS) as executor:
         k_future = executor.submit(get_kalshi_orderbook, kalshi_ticker, levels)
         p_future = executor.submit(get_polymarket_orderbook, polymarket_ticker, levels)
         
