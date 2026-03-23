@@ -1,4 +1,4 @@
-TODO 1.1 NOT SOLVED
+TODO 1.1 SOLVED
 Currently, when the market has multiple sub markets, the polymarket csv rules show to top level rule, for example:
 for example, see EDA:
 
@@ -19,3 +19,30 @@ TODO 2.1
 LLMtest.py is work in progress, the pre prompt can be refined, finding the "right" model is not trivial, for now its local.
 verifying its outputs is needed (maybe manually). etc etc
 
+Todo 3.1 
+
+Complete main.py so that it uses all other files that are needed in the correct order. It also needs to print what is not working if a problem occurs.
+
+Todo 4.1 SOLVED
+
+Check if oderbook_fetcher or oderbook is better, and remove the other one.
+
+todo 5.1 SOLVED
+
+check whitch of the arbitrage_calculators is better, and remove the other one.
+
+todo 6.1
+
+Improve so that the matching algorithm does not need to check every possible combination of markets.
+
+
+todo 7.1
+
+Improve the matching algorithm, so that the LLM needs to do less work.
+<<<<<<< HEAD
+=======
+
+
+todo 8.1 SOLVED
+
+Add below keys to the env file 

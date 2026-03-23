@@ -12,8 +12,9 @@ from apis.kalshi_api import main as run_kalshi_api
 from apis.polymarket_api import main as run_polymarket_api
 from matching.matching import main as run_matching
 from matching.semantic_matching import rescore_existing_matches
-from orderbook_fetcher import main as run_fetcher
+from apis.orderbook import run_batch_fetch as run_fetcher
 from arbitrage_calculator import calculate_arbitrage as run_calculator
+from liquidity_analyzer import analyze_liquidity_and_efficiency as run_liquidity_check
 
 # Configuration
 KALSHI_CSV = "Data/kalshi_markets.csv"
@@ -102,6 +103,12 @@ def main():
         run_calculator()
     except Exception as e:
         print(f"Error running Arbitrage Calculator: {e}")
+    
+    print("\n--- RUNNING LIQUIDITY & EFFICIENCY CHECK ---")
+    try:
+        run_liquidity_check()
+    except Exception as e:
+        print(f"Error running Liquidity Check: {e}")
     
     print("\n=== ORCHESTRATOR DONE ===")
 

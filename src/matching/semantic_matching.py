@@ -2,16 +2,48 @@ import pandas as pd
 import torch
 from sentence_transformers import SentenceTransformer, util
 
-# Keep the model instance outside so we don't reload it every time
+# =========================
+# Configuration
+# =========================
+
+MODEL_NAME = "all-MiniLM-L6-v2"
+
+# Minimum cosine similarity to consider a pair a candidate match
+SIMILARITY_THRESHOLD = 0.40
+
+# Max number of Polymarket matches to keep per Kalshi market
+TOP_K = 5
+
+# Max allowed difference in close_time (days) between matched markets
+MAX_DATE_DIFF_DAYS = 20
+
+# Column names for market titles in the input DataFrames
+TITLE_COL_KALSHI = "market_title"
+TITLE_COL_POLY = "market_title"
+
+# Statuses to exclude from Kalshi and include from Polymarket
+KALSHI_EXCLUDE_STATUSES = ["finalized", "settled"]
+POLYMARKET_INCLUDE_STATUS = "active"
+
+# Default file paths
+KALSHI_CSV = "Data/kalshi_markets.csv"
+POLYMARKET_CSV = "Data/polymarket_markets.csv"
+MATCHES_CSV = "Data/candidate_series_matches.csv"
+OUTPUT_CSV = "Data/semantic_matches.csv"
+
+# =========================
+# Model Singleton
+# =========================
+
 _model = None
 
 def get_model():
     global _model
     if _model is None:
-        _model = SentenceTransformer('all-MiniLM-L6-v2')
+        _model = SentenceTransformer(MODEL_NAME)
     return _model
 
-def generate_semantic_matches(kalshi_df, polymarket_df, title_col_kalshi='market_title', title_col_poly='market_title', threshold=0.40, top_k=5, max_date_diff=45):
+def generate_semantic_matches(kalshi_df, polymarket_df, title_col_kalshi=TITLE_COL_KALSHI, title_col_poly=TITLE_COL_POLY, threshold=SIMILARITY_THRESHOLD, top_k=TOP_K, max_date_diff=MAX_DATE_DIFF_DAYS):
     """
     Finds matches strictly based on cosine similarity of the given title columns.
     Returns a DataFrame ranked by semantic similarity.
@@ -25,11 +57,11 @@ def generate_semantic_matches(kalshi_df, polymarket_df, title_col_kalshi='market
     # Filter closed/finished markets
     if "status" in kalshi_df.columns:
         kalshi_df["status"] = kalshi_df["status"].astype(str).str.lower().str.strip()
-        kalshi_df = kalshi_df[~kalshi_df["status"].isin(["finalized", "settled"])]
+        kalshi_df = kalshi_df[~kalshi_df["status"].isin(KALSHI_EXCLUDE_STATUSES)]
         
     if "status" in polymarket_df.columns:
         polymarket_df["status"] = polymarket_df["status"].astype(str).str.lower().str.strip()
-        polymarket_df = polymarket_df[polymarket_df["status"] == "active"]
+        polymarket_df = polymarket_df[polymarket_df["status"] == POLYMARKET_INCLUDE_STATUS]
 
     # Convert close_time to datetime
     if "close_time" in kalshi_df.columns:
@@ -131,11 +163,11 @@ def main():
     parser = argparse.ArgumentParser(description="Semantic Matching for Kalshi and Polymarket")
     parser.add_argument("--mode", choices=["standalone", "rescore"], default="standalone", 
                         help="standalone: compute matches from base CSVs. rescore: enhance existing matches CSV.")
-    parser.add_argument("--k_csv", default="Data/kalshi_markets.csv")
-    parser.add_argument("--p_csv", default="Data/polymarket_markets.csv")
-    parser.add_argument("--matches_csv", default="Data/candidate_series_matches.csv")
-    parser.add_argument("--out_csv", default="Data/semantic_matches.csv")
-    parser.add_argument("--threshold", type=float, default=0.40)
+    parser.add_argument("--k_csv", default=KALSHI_CSV)
+    parser.add_argument("--p_csv", default=POLYMARKET_CSV)
+    parser.add_argument("--matches_csv", default=MATCHES_CSV)
+    parser.add_argument("--out_csv", default=OUTPUT_CSV)
+    parser.add_argument("--threshold", type=float, default=SIMILARITY_THRESHOLD)
     
     args = parser.parse_args()
     
