@@ -13,7 +13,7 @@ from apis.polymarket_api import main as run_polymarket_api
 from matching.matching import main as run_matching
 from matching.semantic_matching import rescore_existing_matches
 from apis.orderbook import run_batch_fetch as run_fetcher
-from arbitrage_calculator import calculate_arbitrage as run_calculator
+from arbitrage_calculator import calculate_arbitrage_from_csv as run_calculator
 
 # Configuration
 KALSHI_CSV = "Data/kalshi_markets.csv"
