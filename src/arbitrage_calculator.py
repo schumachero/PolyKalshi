@@ -27,10 +27,10 @@ def calculate_arbitrage():
     print(f"Loaded {len(df)} matches from {INPUT_CSV}")
 
     # Drop rows without a score
-    df = df.dropna(subset=["combined_score"])
+    #df = df.dropna(subset=["combined_score"])
     
     # Filter by match score
-    df = df[df["combined_score"] >= MIN_SCORE]
+    #df = df[df["combined_score"] >= MIN_SCORE]
     print(f"Filtered to {len(df)} matches with score >= {MIN_SCORE}")
 
     results = []
@@ -84,7 +84,7 @@ def calculate_arbitrage():
 
     # Display Top 5
     print("\nTop 5 Arbitrage Opportunities:")
-    cols_to_show = ["kalshi_market", "polymarket_market", "direction", "expected_profit", "combined_score"]
+    cols_to_show = ["kalshi_market", "polymarket_market", "direction", "expected_profit"]
     print(out_df[cols_to_show].head(5).to_string(index=False))
 
 if __name__ == "__main__":

@@ -11,7 +11,7 @@ OUTPUT_ANALYSIS_CSV = "Data/arbitrage_liquidity_analysis.csv"
 MIN_LIQUIDITY_USD = 50.0 
 
 # Minimum ROI per day (e.g., 0.1% per day minimum)
-MIN_DAILY_ROI = 0.05 
+MIN_DAILY_ROI = 0.02 
 
 # Maximum days until resolution (to avoid locking funds too long)
 MAX_RESOLUTION_DAYS = 365 
@@ -128,7 +128,7 @@ def analyze_liquidity_and_efficiency():
     else:
         print("\nNo opportunities passed the liquidity/efficiency filters.")
         print("Top failed opportunities for context:")
-        print(analysis_df[["kalshi_market", "strategy", "profit_pct", "daily_roi", "liquidity_usd", "fail_reason"]].head(5).to_string(index=False))
+        print(analysis_df[["kalshi_market", "strategy", "profit_pct", "daily_roi", "liquidity_usd", "fail_reason"]].head(10).to_string(index=False))
 
 if __name__ == "__main__":
     analyze_liquidity_and_efficiency()

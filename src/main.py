@@ -19,7 +19,7 @@ from liquidity_analyzer import analyze_liquidity_and_efficiency as run_liquidity
 # Configuration
 KALSHI_CSV = "Data/kalshi_markets.csv"
 POLYMARKET_CSV = "Data/polymarket_markets.csv"
-MATCHES_CSV = "Data/candidate_series_matches.csv"
+MATCHES_CSV = "Data/predicted_equivalent_markets_with_close_times.csv"
 MAX_AGE_SECONDS = 36000  # 10 hours
 
 def is_file_updated(filepath, max_age):

@@ -153,7 +153,7 @@ def get_matched_orderbooks(kalshi_ticker, polymarket_ticker, levels=DEFAULT_LEVE
             "polymarket": p_future.result()
         }
 
-def run_batch_fetch(matches_csv="Data/candidate_series_matches.csv", output_csv="Data/matched_orderbooks.csv"):
+def run_batch_fetch(matches_csv="Data/predicted_equivalent_markets_with_close_times.csv", output_csv="Data/matched_orderbooks.csv"):
     """
     Reads matches from CSV, fetches orderbook for each match, and saves results.
     Maintains compatibility with orderbook_fetcher.py output format (0-100 scale).
