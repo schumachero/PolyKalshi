@@ -187,9 +187,13 @@ def run_batch_fetch(matches_csv="Data/candidate_series_matches.csv", output_csv=
             k_no_asks = obs["kalshi"]["no"]["asks"]
             
             res_row["k_yes_bid"] = k_yes_bids[0]["price"] * 100 if k_yes_bids else None
+            res_row["k_yes_bid_vol"] = k_yes_bids[0]["volume"] if k_yes_bids else None
             res_row["k_yes_ask"] = k_yes_asks[0]["price"] * 100 if k_yes_asks else None
+            res_row["k_yes_ask_vol"] = k_yes_asks[0]["volume"] if k_yes_asks else None
             res_row["k_no_bid"] = k_no_bids[0]["price"] * 100 if k_no_bids else None
+            res_row["k_no_bid_vol"] = k_no_bids[0]["volume"] if k_no_bids else None
             res_row["k_no_ask"] = k_no_asks[0]["price"] * 100 if k_no_asks else None
+            res_row["k_no_ask_vol"] = k_no_asks[0]["volume"] if k_no_asks else None
             
             # Polymarket
             p_yes_bids = obs["polymarket"]["yes"]["bids"]
@@ -198,9 +202,13 @@ def run_batch_fetch(matches_csv="Data/candidate_series_matches.csv", output_csv=
             p_no_asks = obs["polymarket"]["no"]["asks"]
             
             res_row["p_yes_bid"] = p_yes_bids[0]["price"] * 100 if p_yes_bids else None
+            res_row["p_yes_bid_vol"] = p_yes_bids[0]["volume"] if p_yes_bids else None
             res_row["p_yes_ask"] = p_yes_asks[0]["price"] * 100 if p_yes_asks else None
+            res_row["p_yes_ask_vol"] = p_yes_asks[0]["volume"] if p_yes_asks else None
             res_row["p_no_bid"] = p_no_bids[0]["price"] * 100 if p_no_bids else None
+            res_row["p_no_bid_vol"] = p_no_bids[0]["volume"] if p_no_bids else None
             res_row["p_no_ask"] = p_no_asks[0]["price"] * 100 if p_no_asks else None
+            res_row["p_no_ask_vol"] = p_no_asks[0]["volume"] if p_no_asks else None
             
         except Exception as e:
             print(f"Error processing row {i}: {e}")
