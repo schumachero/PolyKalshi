@@ -23,13 +23,11 @@ Todo 3.1
 
 Complete main.py so that it uses all other files that are needed in the correct order. It also needs to print what is not working if a problem occurs.
 
-Todo 4.1
+Todo 4.1 SOLVED
 
 Check if oderbook_fetcher or oderbook is better, and remove the other one.
 
-todo 5.1
-
-check whitch of the arbitrage_calculators is better, and remove the other one.
+todo 5.1 SOLVED
 
 todo 6.1
 

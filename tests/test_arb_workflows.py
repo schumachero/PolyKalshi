@@ -13,7 +13,7 @@ if src_dir not in sys.path:
     sys.path.append(src_dir)
 
 from src.apis.orderbook import get_matched_orderbooks
-from src.apis.arbitrage_calculator import calculate_arbitrage, quick_check_arbitrage, get_best_combo_price
+from src.arbitrage_calculator import calculate_arbitrage, quick_check_arbitrage, get_best_combo_price
 
 # =========================
 # Configuration
