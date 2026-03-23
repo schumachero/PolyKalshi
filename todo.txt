@@ -46,3 +46,10 @@ Improve the matching algorithm, so that the LLM needs to do less work.
 todo 8.1 SOLVED
 
 Add below keys to the env file 
+
+
+todo 9.1
+
+Implement simulated order placing (first with paper money) on 
+predicted equivalent markets -> found arbitrage -> liquidity -> 
+-> arb better than risk free rate -> place orders on both sides    
