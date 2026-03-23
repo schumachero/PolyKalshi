@@ -23,6 +23,7 @@ from src.arbitrage_calculator import calculate_arbitrage, quick_check_arbitrage,
 CANDIDATE_MATCHES_CSV = "Data/candidate_series_matches.csv"
 SEMANTIC_MATCHES_CSV = "Data/semantic_matches.csv"
 PREDICTED_MATCHES_CSV = "Data/predicted_equivalent_markets.csv"
+LLM_ALL_PREDICTIONS_CSV = "Data/llm_all_predictions.csv"
 DEEP_ARBS_OUTPUT_CSV = "Data/llm_deep_arbs.csv"
 
 # Orderbook depth (number of price levels to fetch)
@@ -196,12 +197,92 @@ def run_llm_predicted_matches_test(limit=None):
     except Exception as e:
         print(f"Error during LLM predicted matches test: {e}")
 
+def run_llm_all_predictions_test(limit=None):
+    """Reads llm_all_predictions.csv, filters for Equivalent pairs, fetches orderbooks, and checks arb potential."""
+    try:
+        df = pd.read_csv(LLM_ALL_PREDICTIONS_CSV)
+        if df.empty:
+            print("LLM All Predictions CSV empty. Cannot test.")
+            return
+        
+        # Filter to only LLM-predicted equivalent pairs
+        df = df[df["prediction_label"] == "Equivalent"].copy()
+        # Drop duplicates (the file may contain duplicate runs)
+        df = df.drop_duplicates(subset=["kalshi_market_ticker", "polymarket_market_ticker"]).reset_index(drop=True)
+        
+        if df.empty:
+            print("No Equivalent pairs found in llm_all_predictions.csv.")
+            return
+            
+        if limit and limit > 0:
+            df = df.head(limit)
+            
+        print(f"\n--- Testing LLM All Predictions (Equivalent only) for Deep Arbitrage (< ${LLM_PRICE_UPPER}) ---")
+        total = len(df)
+        print(f"Fetching {total} markets concurrently...")
+        
+        arbs_list = []
+        
+        def process_row(row):
+            k_tick = str(row["kalshi_market_ticker"]).strip()
+            p_tick = str(row["polymarket_market_ticker"]).strip()
+            k_title = str(row.get("kalshi_market", k_tick)).strip().replace('\n', ' ').replace('\r', '')
+            p_title = str(row.get("polymarket_market", p_tick)).strip().replace('\n', ' ').replace('\r', '')
+            
+            try:
+                obs = get_matched_orderbooks(k_tick, p_tick, levels=ORDERBOOK_LEVELS)
+                best = get_best_combo_price(obs)
+                
+                if best and MIN_PRICE_FLOOR <= best["price"] <= LLM_PRICE_UPPER:
+                    return {
+                        "kalshi_market_ticker": k_tick,
+                        "kalshi_series_ticker": row.get("kalshi_series_ticker", ""),
+                        "kalshi_market": k_title,
+                        "polymarket_market_ticker": p_tick,
+                        "polymarket_series_ticker": row.get("polymarket_series_ticker", ""),
+                        "polymarket_market": p_title,
+                        "price": best["price"],
+                        "strategy": best["strategy"]
+                    }
+            except Exception as e:
+                pass
+            return None
+            
+        with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+            rows_to_process = [row for _, row in df.iterrows()]
+            futures = [executor.submit(process_row, r) for r in rows_to_process]
+            
+            matches_found = 0
+            for future in concurrent.futures.as_completed(futures):
+                res = future.result()
+                if res:
+                    print(f"\n[DEEP ARB FOUND!]")
+                    print(f"Kalshi: {res['kalshi_market']} ({res['kalshi_market_ticker']})")
+                    print(f"Polymarket: {res['polymarket_market']} ({res['polymarket_market_ticker']})")
+                    print(f"-> Price: ${res['price']} ({res['strategy']})")
+                    arbs_list.append(res)
+                    matches_found += 1
+            
+        print(f"\nDone. Found {matches_found} potential arbs below ${LLM_PRICE_UPPER} out of {total}.")
+        
+        if arbs_list:
+            out_df = pd.DataFrame(arbs_list)
+            out_df.sort_values(by="price", inplace=True)
+            out_path = DEEP_ARBS_OUTPUT_CSV
+            out_df.to_csv(out_path, index=False)
+            print(f"Saved sorted arbitrages to {out_path}")
+            
+    except FileNotFoundError:
+        print(f"{LLM_ALL_PREDICTIONS_CSV} not found.")
+    except Exception as e:
+        print(f"Error during LLM all predictions test: {e}")
+
 def main():
     import sys
     # If arguments are provided, use argparse
     if len(sys.argv) > 1:
         parser = argparse.ArgumentParser(description="Standalone Test Runner for PolyKalshi Arbitrage Workflows")
-        parser.add_argument("--test", choices=["candidate", "semantic", "llm", "all"], required=True, help="Which test to run")
+        parser.add_argument("--test", choices=["candidate", "semantic", "llm", "llm_all", "all"], required=True, help="Which test to run")
         parser.add_argument("--limit", type=int, default=DEFAULT_LIMIT, help="Limit of matches for the semantic test")
         
         args = parser.parse_args()
@@ -213,10 +294,11 @@ def main():
         print("1. Run Candidate Merging Test (tests first match from candidate_series_matches.csv)")
         print("2. Run Top Semantic Matches Test (tests N matches from semantic_matches.csv)")
         print("3. Run LLM Predicted Matches Test (tests < $0.96 arb on predicted_equivalent_markets.csv)")
-        print("4. Run All Tests")
-        print("5. Exit")
+        print("4. Run LLM All Predictions Test (tests < $0.96 arb on llm_all_predictions.csv, Equivalent only)")
+        print("5. Run All Tests")
+        print("6. Exit")
         
-        choice = input("\nSelect an option (1-5): ").strip()
+        choice = input("\nSelect an option (1-6): ").strip()
         
         limit = 50
         if choice == '1':
@@ -231,8 +313,10 @@ def main():
         elif choice == '3':
             test_choice = 'llm'
         elif choice == '4':
-            test_choice = 'all'
+            test_choice = 'llm_all'
         elif choice == '5':
+            test_choice = 'all'
+        elif choice == '6':
             print("Exiting.")
             sys.exit(0)
         else:
@@ -247,6 +331,9 @@ def main():
 
     if test_choice in ["llm", "all"]:
         run_llm_predicted_matches_test(limit=limit)
+
+    if test_choice in ["llm_all", "all"]:
+        run_llm_all_predictions_test(limit=limit)
 
 if __name__ == "__main__":
     main()
