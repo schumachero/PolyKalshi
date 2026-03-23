@@ -1,12 +1,33 @@
 import requests
 import pandas as pd
 import json
+import concurrent.futures
+import time
+import os
 
+# =========================
+# Configuration
+# =========================
+
+# API base URLs
 KALSHI_BASE = "https://api.elections.kalshi.com/trade-api/v2"
 POLYMARKET_GAMMA = "https://gamma-api.polymarket.com"
 POLYMARKET_CLOB = "https://clob.polymarket.com"
 
-def get_kalshi_orderbook(market_ticker, levels=20):
+# Default number of orderbook price levels to fetch
+DEFAULT_LEVELS = 20
+
+# HTTP request timeout in seconds
+REQUEST_TIMEOUT = 10
+
+# Thread pool workers for concurrent fetching
+THREAD_POOL_WORKERS = 2
+
+# =========================
+# Orderbook Functions
+# =========================
+
+def get_kalshi_orderbook(market_ticker, levels=DEFAULT_LEVELS):
     """
     Fetches the top orderbook levels (bids and asks) for YES and NO from Kalshi.
     Kalshi provides "yes_dollars" (Yes Bids) and "no_dollars" (No Bids).
@@ -14,7 +35,7 @@ def get_kalshi_orderbook(market_ticker, levels=20):
     """
     url = f"{KALSHI_BASE}/markets/{market_ticker}/orderbook"
     try:
-        r = requests.get(url, timeout=10)
+        r = requests.get(url, timeout=REQUEST_TIMEOUT)
         r.raise_for_status()
         data = r.json()
     except Exception as e:
@@ -59,12 +80,12 @@ def get_kalshi_orderbook(market_ticker, levels=20):
         }
     }
 
-def get_polymarket_orderbook(market_ticker, levels=20):
+def get_polymarket_orderbook(market_ticker, levels=DEFAULT_LEVELS):
     """
     Fetches the market details to get token IDs, then fetches both bids and asks from CLOB.
     """
     try:
-        m_r = requests.get(f"{POLYMARKET_GAMMA}/markets/{market_ticker}", timeout=10)
+        m_r = requests.get(f"{POLYMARKET_GAMMA}/markets/{market_ticker}", timeout=REQUEST_TIMEOUT)
         m_r.raise_for_status()
         market_data = m_r.json()
     except Exception as e:
@@ -87,7 +108,7 @@ def get_polymarket_orderbook(market_ticker, levels=20):
     def fetch_clob_book(token_id):
         url = f"{POLYMARKET_CLOB}/book?token_id={token_id}"
         try:
-            r = requests.get(url, timeout=10)
+            r = requests.get(url, timeout=REQUEST_TIMEOUT)
             r.raise_for_status()
             data = r.json()
             bids_raw = data.get("bids", [])
@@ -111,19 +132,86 @@ def get_polymarket_orderbook(market_ticker, levels=20):
             "asks": parse_array(asks_raw, is_bid=False)
         }
 
-    return {
-        "yes": fetch_clob_book(yes_token),
-        "no": fetch_clob_book(no_token)
-    }
+    with concurrent.futures.ThreadPoolExecutor(max_workers=THREAD_POOL_WORKERS) as executor:
+        yes_future = executor.submit(fetch_clob_book, yes_token)
+        no_future = executor.submit(fetch_clob_book, no_token)
+        return {
+            "yes": yes_future.result(),
+            "no": no_future.result()
+        }
 
-def get_matched_orderbooks(kalshi_ticker, polymarket_ticker, levels=20):
+def get_matched_orderbooks(kalshi_ticker, polymarket_ticker, levels=DEFAULT_LEVELS):
     """
     Returns structured data containing orderbook levels from both platforms.
     """
-    return {
-        "kalshi": get_kalshi_orderbook(kalshi_ticker, levels=levels),
-        "polymarket": get_polymarket_orderbook(polymarket_ticker, levels=levels)
-    }
+    with concurrent.futures.ThreadPoolExecutor(max_workers=THREAD_POOL_WORKERS) as executor:
+        k_future = executor.submit(get_kalshi_orderbook, kalshi_ticker, levels)
+        p_future = executor.submit(get_polymarket_orderbook, polymarket_ticker, levels)
+        
+        return {
+            "kalshi": k_future.result(),
+            "polymarket": p_future.result()
+        }
+
+def run_batch_fetch(matches_csv="Data/candidate_series_matches.csv", output_csv="Data/matched_orderbooks.csv"):
+    """
+    Reads matches from CSV, fetches orderbook for each match, and saves results.
+    Maintains compatibility with orderbook_fetcher.py output format (0-100 scale).
+    """
+    if not os.path.exists(matches_csv):
+        print(f"File {matches_csv} not found.")
+        return
+
+    df = pd.read_csv(matches_csv)
+    print(f"Processing {len(df)} matches from {matches_csv}...")
+    
+    results = []
+    
+    for i, row in df.iterrows():
+        k_ticker = row["kalshi_market_ticker"]
+        p_ticker = row["polymarket_market_ticker"]
+        
+        print(f"[{i+1}/{len(df)}] Fetching {k_ticker} and {p_ticker}...")
+        
+        # Use existing logic to fetch detailed orderbooks
+        obs = get_matched_orderbooks(k_ticker, p_ticker, levels=1)
+        
+        res_row = row.to_dict()
+        
+        # Extract best levels and scale to 0-100 to match old fetcher behavior
+        try:
+            # Kalshi
+            k_yes_bids = obs["kalshi"]["yes"]["bids"]
+            k_yes_asks = obs["kalshi"]["yes"]["asks"]
+            k_no_bids = obs["kalshi"]["no"]["bids"]
+            k_no_asks = obs["kalshi"]["no"]["asks"]
+            
+            res_row["k_yes_bid"] = k_yes_bids[0]["price"] * 100 if k_yes_bids else None
+            res_row["k_yes_ask"] = k_yes_asks[0]["price"] * 100 if k_yes_asks else None
+            res_row["k_no_bid"] = k_no_bids[0]["price"] * 100 if k_no_bids else None
+            res_row["k_no_ask"] = k_no_asks[0]["price"] * 100 if k_no_asks else None
+            
+            # Polymarket
+            p_yes_bids = obs["polymarket"]["yes"]["bids"]
+            p_yes_asks = obs["polymarket"]["yes"]["asks"]
+            p_no_bids = obs["polymarket"]["no"]["bids"]
+            p_no_asks = obs["polymarket"]["no"]["asks"]
+            
+            res_row["p_yes_bid"] = p_yes_bids[0]["price"] * 100 if p_yes_bids else None
+            res_row["p_yes_ask"] = p_yes_asks[0]["price"] * 100 if p_yes_asks else None
+            res_row["p_no_bid"] = p_no_bids[0]["price"] * 100 if p_no_bids else None
+            res_row["p_no_ask"] = p_no_asks[0]["price"] * 100 if p_no_asks else None
+            
+        except Exception as e:
+            print(f"Error processing row {i}: {e}")
+            
+        results.append(res_row)
+        # Small delay to avoid aggressive rate limiting even though it's threaded
+        time.sleep(0.1)
+        
+    out_df = pd.DataFrame(results)
+    out_df.to_csv(output_csv, index=False)
+    print(f"Results saved to {output_csv}")
 
 def test():
     """Simple test utilizing the matches CSV."""

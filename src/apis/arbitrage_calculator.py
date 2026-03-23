@@ -6,21 +6,41 @@ before the combined marginal price (plus fees) exceeds a target threshold.
 """
 import copy
 
+# =========================
+# Configuration
+# =========================
+
+# Kalshi taker fee coefficient: fee = KALSHI_FEE_COEFFICIENT * P * (1 - P)
+KALSHI_FEE_COEFFICIENT = 0.07
+
+# Default Polymarket fee rate (0% for standard markets)
+DEFAULT_POLY_FEE_RATE = 0.0
+
+# Default price threshold for the volume-filling arbitrage scanner
+DEFAULT_PRICE_THRESHOLD = 1.10
+
+# Default threshold for the quick-check single-level arbitrage test
+QUICK_CHECK_THRESHOLD = 0.95
+
+# =========================
+# Fee Calculations
+# =========================
+
 def calculate_kalshi_marginal_fee(price):
     """
     Kalshi charges taker fees on matched contracts.
-    Formula per contract: 0.07 * P * (1-P)
+    Formula per contract: KALSHI_FEE_COEFFICIENT * P * (1-P)
     """
-    return 0.07 * price * (1.0 - price)
+    return KALSHI_FEE_COEFFICIENT * price * (1.0 - price)
 
-def calculate_poly_marginal_fee(price, fee_rate=0.0):
+def calculate_poly_marginal_fee(price, fee_rate=DEFAULT_POLY_FEE_RATE):
     """
     Polymarket standard markets are 0%. 
     Can be configured for 15-min crypto markets if needed via fee_rate.
     """
     return price * fee_rate
 
-def find_arbitrage_volume(kalshi_asks, poly_asks, price_threshold=1.10, poly_fee_rate=0.0):
+def find_arbitrage_volume(kalshi_asks, poly_asks, price_threshold=DEFAULT_PRICE_THRESHOLD, poly_fee_rate=DEFAULT_POLY_FEE_RATE):
     """
     Merges two orderbooks slice by slice, buying the cheapest available paired contracts.
     Stops when the combined price of the pair (including fees) exceeds the price_threshold.
@@ -116,7 +136,7 @@ def find_arbitrage_volume(kalshi_asks, poly_asks, price_threshold=1.10, poly_fee
     }
 
 
-def quick_check_arbitrage(orderbooks, threshold=0.95, poly_fee_rate=0.0):
+def quick_check_arbitrage(orderbooks, threshold=QUICK_CHECK_THRESHOLD, poly_fee_rate=DEFAULT_POLY_FEE_RATE):
     """
     Quickly checks if the best available prices on the first level of the orderbooks 
     (including fees) offer an arbitrage opportunity below the given threshold.
@@ -154,7 +174,7 @@ def quick_check_arbitrage(orderbooks, threshold=0.95, poly_fee_rate=0.0):
             
     return False
 
-def get_best_combo_price(orderbooks, poly_fee_rate=0.0):
+def get_best_combo_price(orderbooks, poly_fee_rate=DEFAULT_POLY_FEE_RATE):
     """
     Checks the first level of the orderbooks and returns the lowest combined 
     marginal price for buying 1 unit of a paired market.
@@ -204,7 +224,7 @@ def get_best_combo_price(orderbooks, poly_fee_rate=0.0):
         "strategy": best_strategy
     }
 
-def calculate_arbitrage(orderbooks, price_threshold=1.10, poly_fee_rate=0.0):
+def calculate_arbitrage(orderbooks, price_threshold=DEFAULT_PRICE_THRESHOLD, poly_fee_rate=DEFAULT_POLY_FEE_RATE):
     """
     Evaluates both directional strategies to find executable volume below the price threshold.
     """

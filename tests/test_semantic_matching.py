@@ -2,6 +2,23 @@ import pytest
 import pandas as pd
 from src.matching.semantic_matching import generate_semantic_matches, rescore_existing_matches
 
+# =========================
+# Configuration
+# =========================
+
+# Threshold used for generating test matches (intentionally low to capture all pairs)
+TEST_GENERATE_THRESHOLD = 0.10
+
+# Threshold used for rescoring test matches
+TEST_RESCORE_THRESHOLD = 0.1
+
+# Minimum expected semantic score for known-equivalent market pairs
+MIN_EXPECTED_SCORE = 0.50
+
+# =========================
+# Tests
+# =========================
+
 def test_generate_semantic_matches():
     k_data = pd.DataFrame([
         {"market_ticker": "K1", "series_ticker": "KS1", "market_title": "Will Trump win the election in 2024?", "rules_text": "Rules A"},
@@ -12,14 +29,14 @@ def test_generate_semantic_matches():
         {"market_ticker": "P2", "series_ticker": "PS2", "market_title": "Will it rain tomorrow in NY?", "rules_text": "Rules D"}
     ])
     
-    df = generate_semantic_matches(k_data, p_data, threshold=0.10)
+    df = generate_semantic_matches(k_data, p_data, threshold=TEST_GENERATE_THRESHOLD)
     
     assert not df.empty
     
     # The trump match should be the highest
     trump_match = df[(df['kalshi_market_ticker'] == 'K1') & (df['polymarket_market_ticker'] == 'P1')]
     assert not trump_match.empty
-    assert trump_match.iloc[0]['semantic_score'] > 0.50
+    assert trump_match.iloc[0]['semantic_score'] > MIN_EXPECTED_SCORE
 
 def test_rescore_existing_matches():
     matches = pd.DataFrame([
@@ -39,7 +56,7 @@ def test_rescore_existing_matches():
         }
     ])
     
-    rescored = rescore_existing_matches(matches, threshold=0.1)
+    rescored = rescore_existing_matches(matches, threshold=TEST_RESCORE_THRESHOLD)
     
     assert 'semantic_score' in rescored.columns
     assert len(rescored) > 0
