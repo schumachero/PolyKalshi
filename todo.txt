@@ -53,3 +53,8 @@ todo 9.1
 Implement simulated order placing (first with paper money) on 
 predicted equivalent markets -> found arbitrage -> liquidity -> 
 -> arb better than risk free rate -> place orders on both sides    
+
+todo 10.1
+
+Implement tracking of current positions, for example for exiting a position early when the 
+between platform spread has closed.
