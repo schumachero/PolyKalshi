@@ -399,6 +399,7 @@ def generate_candidate_matches(kalshi_markets, polymarket_markets):
                 "kalshi_district": krow.get("district"),
                 "kalshi_rules_text": krow.get("rules_text", ""),
                 "kalshi_rules_text_clean": krow.get("rules_text_clean", ""),
+                "kalshi_close_time": str(krow["close_time"]) if pd.notna(krow["close_time"]) else "",
 
                 "polymarket_series_ticker": prow["series_ticker"],
                 "polymarket_series": prow["series_title"],
@@ -409,6 +410,7 @@ def generate_candidate_matches(kalshi_markets, polymarket_markets):
                 "polymarket_district": prow.get("district"),
                 "polymarket_rules_text": prow.get("rules_text", ""),
                 "polymarket_rules_text_clean": prow.get("rules_text_clean", ""),
+                "polymarket_close_time": str(prow["close_time"]) if pd.notna(prow["close_time"]) else "",
 
                 "market_score": round(market_score, 4),
                 "series_score": round(series_score, 4),

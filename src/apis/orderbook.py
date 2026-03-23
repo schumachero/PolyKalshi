@@ -2,6 +2,8 @@ import requests
 import pandas as pd
 import json
 import concurrent.futures
+import time
+import os
 
 # =========================
 # Configuration
@@ -150,6 +152,74 @@ def get_matched_orderbooks(kalshi_ticker, polymarket_ticker, levels=DEFAULT_LEVE
             "kalshi": k_future.result(),
             "polymarket": p_future.result()
         }
+
+def run_batch_fetch(matches_csv="Data/candidate_series_matches.csv", output_csv="Data/matched_orderbooks.csv"):
+    """
+    Reads matches from CSV, fetches orderbook for each match, and saves results.
+    Maintains compatibility with orderbook_fetcher.py output format (0-100 scale).
+    """
+    if not os.path.exists(matches_csv):
+        print(f"File {matches_csv} not found.")
+        return
+
+    df = pd.read_csv(matches_csv)
+    print(f"Processing {len(df)} matches from {matches_csv}...")
+    
+    results = []
+    
+    for i, row in df.iterrows():
+        k_ticker = row["kalshi_market_ticker"]
+        p_ticker = row["polymarket_market_ticker"]
+        
+        print(f"[{i+1}/{len(df)}] Fetching {k_ticker} and {p_ticker}...")
+        
+        # Use existing logic to fetch detailed orderbooks
+        obs = get_matched_orderbooks(k_ticker, p_ticker, levels=1)
+        
+        res_row = row.to_dict()
+        
+        # Extract best levels and scale to 0-100 to match old fetcher behavior
+        try:
+            # Kalshi
+            k_yes_bids = obs["kalshi"]["yes"]["bids"]
+            k_yes_asks = obs["kalshi"]["yes"]["asks"]
+            k_no_bids = obs["kalshi"]["no"]["bids"]
+            k_no_asks = obs["kalshi"]["no"]["asks"]
+            
+            res_row["k_yes_bid"] = k_yes_bids[0]["price"] * 100 if k_yes_bids else None
+            res_row["k_yes_bid_vol"] = k_yes_bids[0]["volume"] if k_yes_bids else None
+            res_row["k_yes_ask"] = k_yes_asks[0]["price"] * 100 if k_yes_asks else None
+            res_row["k_yes_ask_vol"] = k_yes_asks[0]["volume"] if k_yes_asks else None
+            res_row["k_no_bid"] = k_no_bids[0]["price"] * 100 if k_no_bids else None
+            res_row["k_no_bid_vol"] = k_no_bids[0]["volume"] if k_no_bids else None
+            res_row["k_no_ask"] = k_no_asks[0]["price"] * 100 if k_no_asks else None
+            res_row["k_no_ask_vol"] = k_no_asks[0]["volume"] if k_no_asks else None
+            
+            # Polymarket
+            p_yes_bids = obs["polymarket"]["yes"]["bids"]
+            p_yes_asks = obs["polymarket"]["yes"]["asks"]
+            p_no_bids = obs["polymarket"]["no"]["bids"]
+            p_no_asks = obs["polymarket"]["no"]["asks"]
+            
+            res_row["p_yes_bid"] = p_yes_bids[0]["price"] * 100 if p_yes_bids else None
+            res_row["p_yes_bid_vol"] = p_yes_bids[0]["volume"] if p_yes_bids else None
+            res_row["p_yes_ask"] = p_yes_asks[0]["price"] * 100 if p_yes_asks else None
+            res_row["p_yes_ask_vol"] = p_yes_asks[0]["volume"] if p_yes_asks else None
+            res_row["p_no_bid"] = p_no_bids[0]["price"] * 100 if p_no_bids else None
+            res_row["p_no_bid_vol"] = p_no_bids[0]["volume"] if p_no_bids else None
+            res_row["p_no_ask"] = p_no_asks[0]["price"] * 100 if p_no_asks else None
+            res_row["p_no_ask_vol"] = p_no_asks[0]["volume"] if p_no_asks else None
+            
+        except Exception as e:
+            print(f"Error processing row {i}: {e}")
+            
+        results.append(res_row)
+        # Small delay to avoid aggressive rate limiting even though it's threaded
+        time.sleep(0.1)
+        
+    out_df = pd.DataFrame(results)
+    out_df.to_csv(output_csv, index=False)
+    print(f"Results saved to {output_csv}")
 
 def test():
     """Simple test utilizing the matches CSV."""
