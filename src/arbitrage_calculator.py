@@ -73,6 +73,7 @@ def calculate_arbitrage():
         # Create an empty file with headers to maintain consistency
         pd.DataFrame(columns=df.columns.tolist() + ["direction", "total_cost", "expected_profit"]).to_csv(OUTPUT_CSV, index=False)
         return
+    
 
     out_df = pd.DataFrame(results)
     
