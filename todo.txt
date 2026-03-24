@@ -63,3 +63,19 @@ todo 11.1
 
 liquidity_analyer should be able to look one or two steps deeper in the order book, especially if the edge is large for the most shallow orders, 
 but the liquidity is low for them.
+
+todo 12.1
+
+Research edge:
+
+Place a 1-share buy order just above the bot -> 
+Bot outbids to stay in front -> Repeat until the spread is closed or the price peaks -> 
+Dump your entire position into the bot's new bid -> 
+Cancel the small orders so the price reverts.
+
+Swedish traders have done this on the stock exchange and were 
+unfortunately convicted of market manipulation, but I’m thinking 
+it might be safer to do on Polymarket or Kalshi.
+
+I saw it in effect when creating orders on one of the platforms
+so i think it should be viable // ArvidA
