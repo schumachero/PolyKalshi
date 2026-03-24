@@ -58,3 +58,8 @@ todo 10.1
 
 Implement tracking of current positions, for example for exiting a position early when the 
 between platform spread has closed.
+
+todo 11.1
+
+liquidity_analyer should be able to look one or two steps deeper in the order book, especially if the edge is large for the most shallow orders, 
+but the liquidity is low for them.
