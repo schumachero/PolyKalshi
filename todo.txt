@@ -83,3 +83,7 @@ it might be safer to do on Polymarket or Kalshi.
 
 I saw it in effect when creating orders on one of the platforms
 so i think it should be viable // ArvidA
+
+todo 13.1
+
+include any transaction fees in arbitrage calculations. 
