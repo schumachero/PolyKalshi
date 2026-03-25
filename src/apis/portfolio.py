@@ -16,7 +16,17 @@ import datetime
 import math
 import requests
 import csv
+import pandas as pd
 from dotenv import load_dotenv
+
+# Import semantic matching logic
+try:
+    from matching.semantic_matching import generate_semantic_matches
+except ImportError:
+    # Handle the case where src is not in path or relative import issues
+    import sys
+    sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    from matching.semantic_matching import generate_semantic_matches
 
 try:
     from cryptography.hazmat.primitives import hashes, serialization
@@ -111,6 +121,19 @@ def get_kalshi_balance() -> dict:
     }
 
 
+def get_kalshi_market_details(ticker: str) -> dict:
+    """Fetch rules and better title for a Kalshi market."""
+    data = _kalshi_get(f"/markets/{ticker}")
+    if not data:
+        return {}
+    m = data.get("market", {})
+    rules = (m.get("rules_primary") or "") + "\n" + (m.get("rules_secondary") or "")
+    return {
+        "title": m.get("title", ticker),
+        "rules": rules.strip()
+    }
+
+
 def get_kalshi_positions() -> list[dict]:
     """
     Fetch all open (unsettled) positions from Kalshi.
@@ -132,8 +155,8 @@ def get_kalshi_positions() -> list[dict]:
         # print(f"[portfolio] Kalshi positions data: {data}")
 
         for pos in data.get("market_positions", []):
+            ticker = pos.get("ticker", "")
             # Kalshi v2 now uses 'position_fp' for quantity (string)
-            # and '_dollars' suffix for dollar-denominated values (strings)
             raw_pos = float(pos.get("position_fp", 0) or 0)
             yes_qty = raw_pos if raw_pos > 0 else 0
             no_qty  = -raw_pos if raw_pos < 0 else 0
@@ -142,14 +165,18 @@ def get_kalshi_positions() -> list[dict]:
             if qty <= 0:
                 continue
 
+            # Enrich with rules and better title
+            details = get_kalshi_market_details(ticker)
+            
             # Standardize to cents for internal consistency if needed
             exp_cents = int(float(pos.get("market_exposure_dollars", 0) or 0) * 100)
             pnl_cents = int(float(pos.get("realized_pnl_dollars", 0) or 0) * 100)
             traded_cents = int(float(pos.get("total_traded_dollars", 0) or 0) * 100)
 
             positions.append({
-                "ticker":              pos.get("ticker", ""),
-                "title":               pos.get("market_title", pos.get("ticker", "")),
+                "ticker":              ticker,
+                "title":               details.get("title", pos.get("market_title", ticker)),
+                "rules":               details.get("rules", ""),
                 "side":                "YES" if yes_qty > 0 else "NO",
                 "quantity":            int(qty),
                 "avg_price_cents":     0, # Kalshi doesn't easily expose avg price per market in this call
@@ -164,6 +191,28 @@ def get_kalshi_positions() -> list[dict]:
             break
 
     return positions
+
+
+def get_polymarket_market_details(market_id_or_slug: str) -> dict:
+    """Fetch question and rules (description) for a Polymarket market using slug or ID."""
+    url = "https://gamma-api.polymarket.com/markets"
+    # Try slug first, then ID if it looks like a number
+    params = {"slug": market_id_or_slug} if not market_id_or_slug.isdigit() else {"id": market_id_or_slug}
+    
+    try:
+        r = requests.get(url, params=params, timeout=REQUEST_TIMEOUT)
+        r.raise_for_status()
+        data = r.json()
+        if not data:
+            return {}
+        m = data[0] if isinstance(data, list) else data
+        return {
+            "title": m.get("question", m.get("title", "")),
+            "rules": (m.get("description", "") + "\nRules: " + (m.get("rules") or "")).strip()
+        }
+    except Exception as e:
+        print(f"[portfolio] Polymarket market detail error for {market_id_or_slug}: {e}")
+        return {}
 
 
 # =========================
@@ -218,11 +267,16 @@ def get_polymarket_positions(wallet_address: str = None) -> list[dict]:
                 continue
 
             outcome = pos.get("outcome", "")
+            slug = pos.get("slug", "")
+
+            # Enrich with rules
+            details = get_polymarket_market_details(slug)
 
             positions.append({
-                "market_id":     pos.get("market", ""),
+                "market_id":     slug,
                 "condition_id":  pos.get("conditionId", ""),
-                "title":         pos.get("title", ""),
+                "title":         details.get("title", pos.get("title", "")),
+                "rules":         details.get("rules", ""),
                 "side":          "YES" if outcome.lower() in ("yes", "1", "true") else "NO",
                 "size":          size,
                 "avg_price":     float(pos.get("avgPrice", 0) or 0),
@@ -287,14 +341,28 @@ def _cents_to_dollars(cents: int) -> str:
 def save_portfolio_to_csv(rows: list[dict], filename: str = "Data/portfolio.csv"):
     """
     Saves the combined portfolio data to a CSV file.
+    Ensures all rows have the same keys for DictWriter.
     """
     if not rows:
         return
     
-    keys = rows[0].keys()
+    # Get all unique keys from all rows to ensure consistent columns
+    all_keys = set()
+    for r in rows:
+        all_keys.update(r.keys())
+    
+    # Sort keys for consistent column order
+    key_order = [
+        "Platform", "Ticker", "Title", "Side", "Quantity", "Price", 
+        "Value_USD", "P&amp;L_USD", "Closing_Time", "Rules", 
+        "Matched_Ticker", "Match_Score"
+    ]
+    # Add any missing keys at the end
+    fieldnames = [k for k in key_order if k in all_keys] + sorted(list(all_keys - set(key_order)))
+
     try:
         with open(filename, 'w', newline='', encoding='utf-8') as f:
-            dict_writer = csv.DictWriter(f, fieldnames=keys)
+            dict_writer = csv.DictWriter(f, fieldnames=fieldnames)
             dict_writer.writeheader()
             dict_writer.writerows(rows)
         print(f"\nPortfolio saved to {filename}")
@@ -305,7 +373,7 @@ def save_portfolio_to_csv(rows: list[dict], filename: str = "Data/portfolio.csv"
 def print_portfolio_summary(wallet_address: str = None):
     """
     Print a human-readable summary of both Kalshi and Polymarket portfolios.
-    Also calculates totals and saves to CSV.
+    Also calculates totals, runs semantic matching, and saves to CSV.
     """
     print("\n" + "=" * 60)
     print("  PORTFOLIO SUMMARY")
@@ -313,6 +381,9 @@ def print_portfolio_summary(wallet_address: str = None):
 
     all_rows = []
     total_value_usd = 0.0
+
+    k_pos_data = [] # For semantic matching
+    p_pos_data = [] # For semantic matching
 
     # --- Kalshi ---
     print("\nKALSHI")
@@ -339,7 +410,8 @@ def print_portfolio_summary(wallet_address: str = None):
                 "Price": 1.0,
                 "Value_USD": k_cash,
                 "P&L_USD": 0.0,
-                "Closing_Time": "N/A"
+                "Closing_Time": "N/A",
+                "Rules": ""
             })
         else:
             print("  Could not fetch balance (auth error?)")
@@ -355,7 +427,7 @@ def print_portfolio_summary(wallet_address: str = None):
                 close = p["close_time"][:10] if p["close_time"] else "N/A"
                 print(f"  {p['ticker']:<35} {p['side']:<5} {p['quantity']:>6}  {_cents_to_dollars(val_cents):>10}  {close}")
                 
-                all_rows.append({
+                row = {
                     "Platform": "Kalshi",
                     "Ticker": p["ticker"],
                     "Title": p["title"],
@@ -364,7 +436,15 @@ def print_portfolio_summary(wallet_address: str = None):
                     "Price": "N/A",  # Kalshi API is tricky with avg price
                     "Value_USD": val_usd,
                     "P&L_USD": p["realized_pnl_cents"] / 100,
-                    "Closing_Time": close
+                    "Closing_Time": close,
+                    "Rules": p["rules"]
+                }
+                all_rows.append(row)
+                k_pos_data.append({
+                    "market_ticker": p["ticker"],
+                    "market_title": p["title"],
+                    "rules_text": p["rules"],
+                    "close_time": p["close_time"]
                 })
         else:
             print("\n  No open positions found.")
@@ -393,7 +473,8 @@ def print_portfolio_summary(wallet_address: str = None):
             "Price": 1.0,
             "Value_USD": p_cash,
             "P&L_USD": 0.0,
-            "Closing_Time": "N/A"
+            "Closing_Time": "N/A",
+            "Rules": ""
         })
 
         p_positions = get_polymarket_positions(addr)
@@ -402,14 +483,14 @@ def print_portfolio_summary(wallet_address: str = None):
             print(f"  {'Title':<45} {'Side':<5} {'Size':>8}  {'Value':>10}  {'P&L':>8}  {'Ends'}")
             print(f"  {'-'*45} {'-'*5} {'-'*8}  {'-'*10}  {'-'*8}  {'-'*12}")
             for p in p_positions:
-                title = (p["title"] or p["market_id"])[:44]
+                title_short = (p["title"] or p["market_id"])[:44]
                 end = p["end_date"][:10] if p["end_date"] else "N/A"
                 pnl = f"+{p['pnl']:.2f}" if p["pnl"] >= 0 else f"{p['pnl']:.2f}"
                 cur_val = p["current_value"]
                 p_total += cur_val
-                print(f"  {title:<45} {p['side']:<5} {p['size']:>8.2f}  ${cur_val:>9.2f}  {pnl:>8}  {end}")
+                print(f"  {title_short:<45} {p['side']:<5} {p['size']:>8.2f}  ${cur_val:>9.2f}  {pnl:>8}  {end}")
                 
-                all_rows.append({
+                row = {
                     "Platform": "Polymarket",
                     "Ticker": p["market_id"],
                     "Title": p["title"],
@@ -418,13 +499,60 @@ def print_portfolio_summary(wallet_address: str = None):
                     "Price": p["current_price"],
                     "Value_USD": cur_val,
                     "P&L_USD": p["pnl"],
-                    "Closing_Time": end
+                    "Closing_Time": end,
+                    "Rules": p["rules"]
+                }
+                all_rows.append(row)
+                p_pos_data.append({
+                    "market_ticker": p["market_id"],
+                    "market_title": p["title"],
+                    "rules_text": p["rules"],
+                    "close_time": p["end_date"],
+                    "status": "active" # For generate_semantic_matches filtering
                 })
             
             print(f"\n  Polymarket Total Value: ${p_total:.2f}")
             total_value_usd += p_total
         else:
             print("\n  No open positions found (or wallet has no activity).")
+
+    # --- Semantic Matching ---
+    if k_pos_data and p_pos_data:
+        print("\n" + "-" * 40)
+        print("  Running Semantic Matching on Portfolio...")
+        try:
+            k_df = pd.DataFrame(k_pos_data)
+            p_df = pd.DataFrame(p_pos_data)
+            matches_df = generate_semantic_matches(k_df, p_df, threshold=0.3)
+            
+            if not matches_df.empty:
+                print(f"  Found {len(matches_df)} potential overlaps:")
+                # Create match maps for quick lookup
+                # kalshi_ticker -> (poly_ticker, score)
+                k_matches = {}
+                p_matches = {}
+                for _, m in matches_df.iterrows():
+                    kt = m['kalshi_market_ticker']
+                    pt = m['polymarket_market_ticker']
+                    score = m['semantic_score']
+                    
+                    if kt not in k_matches or score > k_matches[kt][1]:
+                        k_matches[kt] = (pt, score)
+                    if pt not in p_matches or score > p_matches[pt][1]:
+                        p_matches[pt] = (kt, score)
+
+                # Update all_rows with match info
+                for r in all_rows:
+                    ticker = r["Ticker"]
+                    if r["Platform"] == "Kalshi" and ticker in k_matches:
+                        r["Matched_Ticker"] = k_matches[ticker][0]
+                        r["Match_Score"] = k_matches[ticker][1]
+                        print(f"    [!] Kalshi {ticker} matches Polymarket {k_matches[ticker][0]} (Score: {k_matches[ticker][1]})")
+                    elif r["Platform"] == "Polymarket" and ticker in p_matches:
+                        r["Matched_Ticker"] = p_matches[ticker][0]
+                        r["Match_Score"] = p_matches[ticker][1]
+        except Exception as e:
+            print(f"  Error during semantic matching: {e}")
 
     print("\n" + "=" * 60)
     print(f"  TOTAL PORTFOLIO VALUE: ${total_value_usd:.2f}")
