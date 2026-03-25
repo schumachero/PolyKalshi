@@ -132,9 +132,16 @@ def get_polymarket_orderbook(market_ticker, levels=DEFAULT_LEVELS):
     Fetch market details to get token IDs, then fetch both bids and asks from CLOB.
     """
     try:
-        m_r = requests.get(f"{POLYMARKET_GAMMA}/markets/{market_ticker}", timeout=REQUEST_TIMEOUT)
+        # Use query parameters for slug, as path-based slug lookup is not reliable on Gamma
+        params = {"slug": market_ticker} if not market_ticker.isdigit() else {"id": market_ticker}
+        m_r = requests.get(f"{POLYMARKET_GAMMA}/markets", params=params, timeout=REQUEST_TIMEOUT)
         m_r.raise_for_status()
         market_data = m_r.json()
+        if isinstance(market_data, list) and len(market_data) > 0:
+            market_data = market_data[0]
+        elif not market_data:
+            print(f"Error: Polymarket market {market_ticker} not found.")
+            return {"yes": {"bids": [], "asks": []}, "no": {"bids": [], "asks": []}}
     except Exception as e:
         print(f"Error fetching Polymarket market {market_ticker}: {e}")
         return {"yes": {"bids": [], "asks": []}, "no": {"bids": [], "asks": []}}
