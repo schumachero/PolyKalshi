@@ -4,3 +4,5 @@ requests
 tqdm
 python-dotenv
 cryptography
+matplotlib
+sentence-transformers
