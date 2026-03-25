@@ -130,7 +130,9 @@ def get_kalshi_market_details(ticker: str) -> dict:
     rules = (m.get("rules_primary") or "") + "\n" + (m.get("rules_secondary") or "")
     return {
         "title": m.get("title", ticker),
-        "rules": rules.strip()
+        "rules": rules.strip(),
+        "yes_bid": float(m.get("yes_bid_dollars", 0) or 0),
+        "no_bid": float(m.get("no_bid_dollars", 0) or 0)
     }
 
 
@@ -165,8 +167,13 @@ def get_kalshi_positions() -> list[dict]:
             if qty <= 0:
                 continue
 
-            # Enrich with rules and better title
+            side = "YES" if yes_qty > 0 else "NO"
+            
+            # Enrich with rules and better title/prices
             details = get_kalshi_market_details(ticker)
+            
+            # Use the bid price for the side we hold to get current market value
+            cur_price = details.get("yes_bid", 0) if side == "YES" else details.get("no_bid", 0)
             
             # Standardize to cents for internal consistency if needed
             exp_cents = int(float(pos.get("market_exposure_dollars", 0) or 0) * 100)
@@ -177,9 +184,10 @@ def get_kalshi_positions() -> list[dict]:
                 "ticker":              ticker,
                 "title":               details.get("title", pos.get("market_title", ticker)),
                 "rules":               details.get("rules", ""),
-                "side":                "YES" if yes_qty > 0 else "NO",
+                "side":                side,
                 "quantity":            int(qty),
-                "avg_price_cents":     0, # Kalshi doesn't easily expose avg price per market in this call
+                "avg_price_cents":     int((exp_cents / qty)) if qty > 0 else 0, 
+                "current_price":       cur_price,
                 "realized_pnl_cents":  pnl_cents,
                 "total_traded_cents":  traded_cents,
                 "close_time":          pos.get("close_time", ""),
@@ -398,9 +406,10 @@ def print_portfolio_summary(wallet_address: str = None):
             k_val = bal.get('portfolio_value_cents', 0) / 100
             k_total = k_val # Kalshi's portfolio_value usually includes cash + positions
             total_value_usd += k_total
+            total_value_usd += k_cash
             print(f"  Cash available : ${_cents_to_dollars(int(k_cash*100))[1:]}")
             print(f"  Portfolio value: ${_cents_to_dollars(int(k_val*100))[1:]}")
-            
+
             all_rows.append({
                 "Platform": "Kalshi",
                 "Ticker": "CASH",

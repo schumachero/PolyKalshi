@@ -25,11 +25,18 @@ def setup_env():
     # 3. Polymarket Wallet Address
     poly_wallet = input("\n3. Enter your Polymarket Wallet Address (0x...): ").strip()
 
+    # 4. Telegram Notifications (Optional)
+    print("\n4. Telegram Notifications (Optional)")
+    tele_token = input("   Enter your Telegram Bot Token: ").strip()
+    tele_chat = input("   Enter your Telegram Chat ID: ").strip()
+
     # Create .env content
     env_content = f"""# PolyKalshi Environment Variables
 KALSHI_ACCESS_KEY={kalshi_key_id}
 KALSHI_RSA_PRIVATE_KEY={formatted_key}
 POLYMARKET_WALLET_ADDRESS={poly_wallet}
+TELEGRAM_TOKEN={tele_token if tele_token else 'your_bot_token_here'}
+TELEGRAM_CHAT_ID={tele_chat if tele_chat else 'your_chat_id_here'}
 """
 
     # Write to .env
@@ -39,8 +46,8 @@ POLYMARKET_WALLET_ADDRESS={poly_wallet}
         with open(env_path, "w") as f:
             f.write(env_content)
         print(f"\n✅ Success! Your .env file has been created at: {env_path}")
-        print("Now you can run the portfolio check:")
-        print("  .\\.venv\\Scripts\\python.exe src/apis/portfolio.py")
+        print("Now you can run the portfolio/exit monitor:")
+        print("  python3 src/exit_monitor.py")
     except Exception as e:
         print(f"\n❌ Error writing .env file: {e}")
 
