@@ -10,8 +10,10 @@ import sys
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 try:
     from apis.portfolio import get_kalshi_positions, get_polymarket_positions, get_kalshi_balance, get_polymarket_balance
+    from matching.semantic_matching import generate_semantic_matches
 except ImportError:
     from apis.portfolio import get_kalshi_positions, get_polymarket_positions, get_kalshi_balance, get_polymarket_balance
+    from matching.semantic_matching import generate_semantic_matches
 
 # --- CONFIGURATION ---
 PORTFOLIO_CSV = os.path.join("Data", "portfolio.csv")
