@@ -195,8 +195,8 @@ def main():
 
     st.divider()
 
-    # 3. Strategy / Matched Pairs Section (Improved Readability & Fresh Pricing)
-    st.subheader("Active Strategy Pairs")
+    # 3. Hedge Strategy & Convergence (Unified View)
+    st.subheader("Hedge Strategy & Convergence")
     k_match = df[df['Platform'] == 'Kalshi'].dropna(subset=['Matched_Ticker'])
     p_side = df[df['Platform'] == 'Polymarket']
     
@@ -217,14 +217,14 @@ def main():
                     k_side_raw = k['Side']
                     p_side_raw = p['Side']
                     
-                    # Logic: We want the BID price for the side we HOLD (to see what we can sell for)
+                    # Logic: We want the BID price for the side we HOLD (to sell)
                     k_b_list = obs.get('kalshi', {}).get(k_side_raw.lower(), {}).get('bids', [])
                     p_b_list = obs.get('polymarket', {}).get(p_side_raw.lower(), {}).get('bids', [])
                     
                     k_bid, k_vol = (k_b_list[0]['price'], k_b_list[0]['volume']) if k_b_list else (0, 0)
                     p_bid, p_vol = (p_b_list[0]['price'], p_b_list[0]['volume']) if p_b_list else (0, 0)
                     
-                    # Liquidity Checks (Align with exit_monitor.py)
+                    # Liquidity Checks
                     k_liq_ok = (k_vol >= VOLUME_PERCENTILE_THRESHOLD * k['Quantity']) or (k_vol * k_bid >= VOLUME_FIXED_THRESHOLD)
                     p_liq_ok = (p_vol >= VOLUME_PERCENTILE_THRESHOLD * p['Quantity']) or (p_vol * p_bid >= VOLUME_FIXED_THRESHOLD)
                     combined = k_bid + p_bid
@@ -237,17 +237,23 @@ def main():
                     else:
                         sell_status = "⏳ Pending Price"
                     
-                    # Hedging Detection
-                    is_hedge = "Standard" if k_side_raw != p_side_raw else "⚠️ Directional Same-Side"
+                    # Hedge Detection (Precise)
+                    # Standard: YES + NO or NO + YES
+                    if k_side_raw != p_side_raw:
+                        is_hedge = "Standard Hedge"
+                    else:
+                        is_hedge = "⚠️ Directional (Same Side)"
 
                     strategy_rows.append({
-                        "Description": k['Title'],
+                        "Strategy": k['Title'],
                         "Combo Bid": f"${combined:.3f}",
                         "Sellable Status": sell_status,
                         "Hedge Type": is_hedge,
-                        "Kalshi": f"{k_side_raw} (${k_bid:.3f})",
-                        "Poly": f"{p_side_raw} (${p_bid:.3f})",
-                        "Gap": f"${max(0.99-combined, 0):.3f}"
+                        "Kalshi Side": f"{k_side_raw} (${k_bid:.3f})",
+                        "Polymarket Side": f"{p_side_raw} (${p_bid:.3f})",
+                        "Gap": f"${max(0.99-combined, 0):.3f}",
+                        "Total Value": f"${(k['Value_USD'] + p['Value_USD']):,.2f}",
+                        "Total P&L": f"${(k['Profit_USD'] + p['Profit_USD']):,.2f}"
                     })
                 
                 if strategy_rows:
@@ -264,100 +270,105 @@ def main():
 
     st.divider()
 
-    # 4. Unified Portfolio Allocations (Matched pairs on same row)
-    st.subheader("Portfolio Allocations")
+    # 4. Aligned Exposure Visualization (Mirror of visualize_portfolios.py)
+    st.subheader("Exposure Distribution (Aligned)")
     
-    # Process for unified display
     pos_only = df[df['Ticker'] != 'CASH'].copy()
-    
-    # Separate Matched from Unmatched
-    matched_k = pos_only[pos_only['Platform'] == 'Kalshi'].dropna(subset=['Matched_Ticker'])
-    matched_p = pos_only[pos_only['Platform'] == 'Polymarket'].dropna(subset=['Matched_Ticker'])
-    
-    unmatched_k = pos_only[(pos_only['Platform'] == 'Kalshi') & (pos_only['Matched_Ticker'].isna() | (pos_only['Matched_Ticker'] == ""))]
-    unmatched_p = pos_only[(pos_only['Platform'] == 'Polymarket') & (pos_only['Matched_Ticker'].isna() | (pos_only['Matched_Ticker'] == ""))]
-    
-    if not matched_k.empty:
-        st.markdown("#### 🤝 Matched Hedge Pairs")
-        unified_rows = []
-        # We iterate over matched_k and find their partners in matched_p
-        # To avoid double counting, we track which Poly tickers we've paired
-        paired_poly_tickers = set()
-        
-        for _, k in matched_k.iterrows():
-            p = matched_p[matched_p['Ticker'] == k['Matched_Ticker']]
-            if p.empty: continue
-            p = p.iloc[0]
-            paired_poly_tickers.add(p['Ticker'])
-            
-            unified_rows.append({
-                "Strategy": k['Title'],
-                "Kalshi Side": k['Side'],
-                "Kalshi Qty": int(k['Quantity']),
-                "Kalshi Val": f"${k['Value_USD']:,.2f}",
-                "Polymarket Side": p['Side'],
-                "Polymarket Qty": f"{p['Quantity']:,.0f}",
-                "Polymarket Val": f"${p['Value_USD']:,.2f}",
-                "Combined Val": k['Value_USD'] + p['Value_USD'],
-                "Combined P&L": k['Profit_USD'] + p['Profit_USD']
-            })
-        
-        if unified_rows:
-            u_df = pd.DataFrame(unified_rows).sort_values("Combined Val", ascending=False)
-            st.dataframe(u_df.style.format({"Combined Val": "${:,.2f}", "Combined P&L": "${:,.2f}"}), use_container_width=True, hide_index=True)
+    if not pos_only.empty:
+        # Create PairID logic from visualize_portfolios.py
+        def get_pair_key(row):
+            t = str(row['Ticker'])
+            m = str(row.get('Matched_Ticker', ''))
+            if not m or m.lower() in ['nan', 'none', '']:
+                return tuple(sorted([t]))
+            return tuple(sorted([t, m]))
 
-    if not unmatched_k.empty or not unmatched_p.empty:
-        st.markdown("#### 🚩 Single-Sided Positions")
+        pos_only['PairID'] = pos_only.apply(get_pair_key, axis=1)
+        
+        # Aggregate pairs
+        k_df = pos_only[pos_only['Platform'] == 'Kalshi']
+        p_df = pos_only[pos_only['Platform'] == 'Polymarket']
+        
+        all_pids = sorted(list(set(k_df['PairID'].tolist() + p_df['PairID'].tolist())))
+        aligned_data = []
+        for pid in all_pids:
+            kr = k_df[k_df['PairID'] == pid]
+            pr = p_df[p_df['PairID'] == pid]
+            
+            title = kr['Title'].iloc[0] if not kr.empty else pr['Title'].iloc[0]
+            k_val = kr['Value_USD'].sum() if not kr.empty else 0
+            p_val = pr['Value_USD'].sum() if not pr.empty else 0
+            
+            aligned_data.append({
+                "Title": title,
+                "Kalshi_Value": k_val,
+                "Polymarket_Value": p_val,
+                "Kalshi_Side": kr['Side'].iloc[0] if not kr.empty else "N/A",
+                "Polymarket_Side": pr['Side'].iloc[0] if not pr.empty else "N/A",
+                "MaxVal": max(k_val, p_val)
+            })
+            
+        aligned_df = pd.DataFrame(aligned_data).sort_values("MaxVal", ascending=True)
+        aligned_df['WrappedTitle'] = aligned_df['Title'].apply(wrap_label)
+        
+        # Create mirrored bar chart using Plotly
+        import plotly.graph_objects as go
+        
+        fig_aligned = go.Figure()
+        
+        # Kalshi Bars (pointing left)
+        fig_aligned.add_trace(go.Bar(
+            y=aligned_df['WrappedTitle'],
+            x=-aligned_df['Kalshi_Value'],
+            name='Kalshi',
+            orientation='h',
+            marker_color='#2ecc71',
+            text=aligned_df['Kalshi_Value'].apply(lambda x: f"${x:,.2f}" if x>0 else ""),
+            textposition='outside'
+        ))
+        
+        # Polymarket Bars (pointing right)
+        fig_aligned.add_trace(go.Bar(
+            y=aligned_df['WrappedTitle'],
+            x=aligned_df['Polymarket_Value'],
+            name='Polymarket',
+            orientation='h',
+            marker_color='#3498db',
+            text=aligned_df['Polymarket_Value'].apply(lambda x: f"${x:,.2f}" if x>0 else ""),
+            textposition='outside'
+        ))
+        
+        fig_aligned.update_layout(
+            barmode='relative',
+            template="plotly_dark",
+            title="Aligned Exposure (Kalshi vs Polymarket)",
+            xaxis=dict(title="Value USD", tickformat="$,.0f"),
+            yaxis=dict(title=None),
+            height=max(400, len(aligned_df)*60),
+            margin=dict(l=0, r=0, t=40, b=0),
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+        )
+        st.plotly_chart(fig_aligned, use_container_width=True)
+    else:
+        st.info("No positions to visualize.")
+
+    st.divider()
+
+    # 5. Single-Sided Audit
+    with st.expander("🔍 Single-Sided Positions & Audit Log"):
+        unmatched_k = pos_only[(pos_only['Platform'] == 'Kalshi') & (pos_only['Matched_Ticker'].isna() | (pos_only['Matched_Ticker'] == ""))]
+        unmatched_p = pos_only[(pos_only['Platform'] == 'Polymarket') & (pos_only['Matched_Ticker'].isna() | (pos_only['Matched_Ticker'] == ""))]
+        
         col_u1, col_u2 = st.columns(2)
         with col_u1:
-            if not unmatched_k.empty:
-                st.markdown("**Kalshi Only**")
-                st.dataframe(unmatched_k[['Title', 'Side', 'Quantity', 'Value_USD', 'Profit_USD']].rename(columns={'Profit_USD':'P&L'}), use_container_width=True, hide_index=True)
-            else: st.info("No single-sided Kalshi positions.")
+            st.markdown("**Kalshi Only**")
+            st.dataframe(unmatched_k[['Title', 'Side', 'Quantity', 'Value_USD', 'Profit_USD']], use_container_width=True, hide_index=True)
         with col_u2:
-            if not unmatched_p.empty:
-                st.markdown("**Polymarket Only**")
-                st.dataframe(unmatched_p[['Title', 'Side', 'Quantity', 'Value_USD', 'Profit_USD']].rename(columns={'Profit_USD':'P&L'}), use_container_width=True, hide_index=True)
-            else: st.info("No single-sided Polymarket positions.")
-
-    # 5. Visual Summary Charts
-    st.divider()
-    st.subheader("Exposure Distribution")
-    col_chart1, col_chart2 = st.columns(2)
-    
-    with col_chart1:
-        # Sunburst or Pie for Platform split
-        fig_platform = px.pie(df, values='Value_USD', names='Platform', title="Asset Distribution by Platform",
-                             color_discrete_map={'Kalshi':'#2ecc71', 'Polymarket':'#3498db'},
-                             template="plotly_dark", hole=0.4)
-        st.plotly_chart(fig_platform, use_container_width=True)
+            st.markdown("**Polymarket Only**")
+            st.dataframe(unmatched_p[['Title', 'Side', 'Quantity', 'Value_USD', 'Profit_USD']], use_container_width=True, hide_index=True)
         
-    with col_chart2:
-        # Bar chart for Top 10 Positions by USD value
-        top_pos = pos_only.sort_values('Value_USD', ascending=False).head(10)
-        top_pos['WrappedTitle'] = top_pos['Title'].apply(wrap_label)
-        fig_top = px.bar(top_pos, x='Value_USD', y='WrappedTitle', orientation='h', 
-                         title="Top 10 Largest Positions",
-                         color='Platform', color_discrete_map={'Kalshi':'#2ecc71', 'Polymarket':'#3498db'},
-                         template="plotly_dark")
-        fig_top.update_layout(yaxis={'categoryorder':'total ascending'})
-        st.plotly_chart(fig_top, use_container_width=True)
-
-    # 5. History Section
-    st.divider()
-    st.subheader("Total Equity Growth")
-    history_file = "Data/history/run_log.csv"
-    if os.path.exists(history_file):
-        try:
-            h_df = pd.read_csv(history_file)
-            fig_h = px.line(h_df, x='snapshot_time', y='total_value_usd', title="NAV Over Time", template="plotly_dark")
-            st.plotly_chart(fig_h, use_container_width=True)
-        except: st.info("History log found but unreadable.")
-    else:
-        st.info("💡 Run a local scan to generate performance logs.")
-
-    # 6. Audit
-    with st.expander("🔍 Portfolio Audit Log"):
+        st.divider()
+        st.markdown("**Raw Data API Feed**")
         st.dataframe(df, use_container_width=True)
 
 if __name__ == "__main__":
