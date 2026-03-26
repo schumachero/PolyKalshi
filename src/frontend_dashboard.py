@@ -270,85 +270,115 @@ def main():
 
     st.divider()
 
-    # 4. Aligned Exposure Visualization (Mirror of visualize_portfolios.py)
+    # 4. Aligned Exposure Visualization (Exact Mirror of visualize_portfolios.py)
     st.subheader("Exposure Distribution (Aligned)")
     
     pos_only = df[df['Ticker'] != 'CASH'].copy()
+    cash_df = df[df['Ticker'] == 'CASH']
+    
     if not pos_only.empty:
-        # Create PairID logic from visualize_portfolios.py
+        import matplotlib.pyplot as plt
+        
+        # 1. Create a stable PairID to align them
         def get_pair_key(row):
             t = str(row['Ticker'])
             m = str(row.get('Matched_Ticker', ''))
-            if not m or m.lower() in ['nan', 'none', '']:
+            if not m or m.lower() in ['nan', '', 'none']:
                 return tuple(sorted([t]))
             return tuple(sorted([t, m]))
 
         pos_only['PairID'] = pos_only.apply(get_pair_key, axis=1)
         
-        # Aggregate pairs
-        k_df = pos_only[pos_only['Platform'] == 'Kalshi']
-        p_df = pos_only[pos_only['Platform'] == 'Polymarket']
+        # 2. Aggregate into unique pairs
+        k_df = pos_only[pos_only['Platform'] == 'Kalshi'].copy()
+        p_df = pos_only[pos_only['Platform'] == 'Polymarket'].copy()
         
         all_pids = sorted(list(set(k_df['PairID'].tolist() + p_df['PairID'].tolist())))
-        aligned_data = []
+        pair_list = []
+        
         for pid in all_pids:
-            kr = k_df[k_df['PairID'] == pid]
-            pr = p_df[p_df['PairID'] == pid]
+            k_row = k_df[k_df['PairID'] == pid]
+            p_row = p_df[p_df['PairID'] == pid]
             
-            title = kr['Title'].iloc[0] if not kr.empty else pr['Title'].iloc[0]
-            k_val = kr['Value_USD'].sum() if not kr.empty else 0
-            p_val = pr['Value_USD'].sum() if not pr.empty else 0
+            title = k_row['Title'].iloc[0] if not k_row.empty else p_row['Title'].iloc[0]
+            k_val = k_row['Value_USD'].sum() if not k_row.empty else 0
+            p_val = p_row['Value_USD'].sum() if not p_row.empty else 0
             
-            aligned_data.append({
-                "Title": title,
-                "Kalshi_Value": k_val,
-                "Polymarket_Value": p_val,
-                "Kalshi_Side": kr['Side'].iloc[0] if not kr.empty else "N/A",
-                "Polymarket_Side": pr['Side'].iloc[0] if not pr.empty else "N/A",
-                "MaxVal": max(k_val, p_val)
+            pair_list.append({
+                'PairID': pid,
+                'Title': title,
+                'K_Val': k_val,
+                'P_Val': p_val,
+                'K_Qty': k_row['Quantity'].iloc[0] if not k_row.empty else 0,
+                'P_Qty': p_row['Quantity'].iloc[0] if not p_row.empty else 0,
+                'K_Side': k_row['Side'].iloc[0] if not k_row.empty else '',
+                'P_Side': p_row['Side'].iloc[0] if not p_row.empty else '',
+                'MaxVal': max(k_val, p_val)
             })
-            
-        aligned_df = pd.DataFrame(aligned_data).sort_values("MaxVal", ascending=True)
-        aligned_df['WrappedTitle'] = aligned_df['Title'].apply(wrap_label)
         
-        # Create mirrored bar chart using Plotly
-        import plotly.graph_objects as go
+        aligned_df = pd.DataFrame(pair_list).sort_values('MaxVal', ascending=True)
+        aligned_df['Y_Label'] = aligned_df['Title'].apply(lambda x: "\n".join(textwrap.wrap(str(x), width=30)))
+
+        # Totals
+        total_k = df[df['Platform'] == 'Kalshi']['Value_USD'].sum()
+        total_p = df[df['Platform'] == 'Polymarket']['Value_USD'].sum()
+        grand_total = total_k + total_p
+        cash_k = cash_df[cash_df['Platform'] == 'Kalshi']['Value_USD'].sum()
+        cash_p = cash_df[cash_df['Platform'] == 'Polymarket']['Value_USD'].sum()
+
+        # Visualization
+        plt.style.use('dark_background')
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 10))
         
-        fig_aligned = go.Figure()
+        def side_color(side):
+            if side == 'YES': return '#2ecc71'
+            if side == 'NO': return '#e74c3c'
+            return '#bdc3c7'
+
+        def get_qty_label(qty, side, value):
+            if value <= 0: return ""
+            q_val = float(qty)
+            qty_str = f"{int(q_val)}" if q_val.is_integer() else f"{q_val:.2f}"
+            return f"[{qty_str} {side}]  ${value:.2f}"
+
+        # Kalshi Plot
+        colors_k = [side_color(s) for s in aligned_df['K_Side']]
+        bars1 = ax1.barh(aligned_df['Y_Label'], aligned_df['K_Val'], color=colors_k, alpha=0.8)
+        ax1.set_title(f'Kalshi\nBets: ${total_k - cash_k:.2f}', fontsize=14, fontweight='bold', color='#2ecc71')
+        ax1.tick_params(axis='y', labelsize=10)
         
-        # Kalshi Bars (pointing left)
-        fig_aligned.add_trace(go.Bar(
-            y=aligned_df['WrappedTitle'],
-            x=-aligned_df['Kalshi_Value'],
-            name='Kalshi',
-            orientation='h',
-            marker_color='#2ecc71',
-            text=aligned_df['Kalshi_Value'].apply(lambda x: f"${x:,.2f}" if x>0 else ""),
-            textposition='outside'
-        ))
+        for i, bar in enumerate(bars1):
+            v = aligned_df.iloc[i]['K_Val']
+            if v > 0:
+                label = get_qty_label(aligned_df.iloc[i]['K_Qty'], aligned_df.iloc[i]['K_Side'], v)
+                ax1.text(v + (grand_total * 0.005), bar.get_y() + bar.get_height()/2, label, 
+                         va='center', fontsize=9, fontweight='bold', color='white')
+
+        # Polymarket Plot
+        colors_p = [side_color(s) for s in aligned_df['P_Side']]
+        bars2 = ax2.barh(aligned_df['Y_Label'], aligned_df['P_Val'], color=colors_p, alpha=0.8)
+        ax2.set_title(f'Polymarket\nBets: ${total_p - cash_p:.2f}', fontsize=14, fontweight='bold', color='#3498db')
+        ax2.tick_params(axis='y', labelsize=10)
         
-        # Polymarket Bars (pointing right)
-        fig_aligned.add_trace(go.Bar(
-            y=aligned_df['WrappedTitle'],
-            x=aligned_df['Polymarket_Value'],
-            name='Polymarket',
-            orientation='h',
-            marker_color='#3498db',
-            text=aligned_df['Polymarket_Value'].apply(lambda x: f"${x:,.2f}" if x>0 else ""),
-            textposition='outside'
-        ))
+        for i, bar in enumerate(bars2):
+            v = aligned_df.iloc[i]['P_Val']
+            if v > 0:
+                label = get_qty_label(aligned_df.iloc[i]['P_Qty'], aligned_df.iloc[i]['P_Side'], v)
+                ax2.text(v + (grand_total * 0.005), bar.get_y() + bar.get_height()/2, label, 
+                         va='center', fontsize=9, fontweight='bold', color='white')
+
+        total_cash = cash_k + cash_p
+        total_bets = (total_k - cash_k) + (total_p - cash_p)
         
-        fig_aligned.update_layout(
-            barmode='relative',
-            template="plotly_dark",
-            title="Aligned Exposure (Kalshi vs Polymarket)",
-            xaxis=dict(title="Value USD", tickformat="$,.0f"),
-            yaxis=dict(title=None),
-            height=max(400, len(aligned_df)*60),
-            margin=dict(l=0, r=0, t=40, b=0),
-            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+        fig.suptitle(
+            f'PolyKalshi Aligned Portfolio Summary\n'
+            f'Cash: ${total_cash:.2f}  |  Bets: ${total_bets:.2f}  |  Total: ${grand_total:.2f}', 
+            fontsize=18, fontweight='bold', y=0.98
         )
-        st.plotly_chart(fig_aligned, use_container_width=True)
+        
+        fig.subplots_adjust(wspace=0.6, left=0.25, right=0.90)
+        plt.tight_layout(rect=[0, 0.03, 1, 0.88])
+        st.pyplot(fig)
     else:
         st.info("No positions to visualize.")
 
