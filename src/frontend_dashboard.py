@@ -164,15 +164,26 @@ def main():
     # sidebar
     with st.sidebar:
         st.header("Connection")
-        if KALSHI_KEY_READY: st.markdown('<div class="status-box status-ok">CONNECTED: KALSHI</div>', unsafe_allow_html=True)
-        else: st.markdown('<div class="status-box status-missing">MISSING: KALSHI</div>', unsafe_allow_html=True)
-        if POLY_KEY_READY: st.markdown('<div class="status-box status-ok">CONNECTED: POLYGON</div>', unsafe_allow_html=True)
-        else: st.markdown('<div class="status-box status-missing">MISSING: POLYGON</div>', unsafe_allow_html=True)
+        if KALSHI_KEY_READY: 
+            st.markdown('<div class="status-box status-ok">CONNECTED: KALSHI</div>', unsafe_allow_html=True)
+            k_preview = os.getenv("KALSHI_ACCESS_KEY", "")[:8] + "..."
+            st.caption(f"Key: {k_preview}")
+        else: 
+            st.markdown('<div class="status-box status-missing">MISSING: KALSHI</div>', unsafe_allow_html=True)
+            
+        if POLY_KEY_READY: 
+            st.markdown('<div class="status-box status-ok">CONNECTED: POLYGON</div>', unsafe_allow_html=True)
+            w_preview = WALLET_ADDR[:6] + "..." + WALLET_ADDR[-4:] if len(WALLET_ADDR) > 10 else WALLET_ADDR
+            st.caption(f"Wallet: {w_preview}")
+        else: 
+            st.markdown('<div class="status-box status-missing">MISSING: POLYGON</div>', unsafe_allow_html=True)
         
         st.divider()
-        if st.button("Force Global Re-Sync"):
+        if st.button("🔄 Force Global Re-Sync", help="Clears cache and refetches everything"):
             st.cache_data.clear()
             st.rerun()
+        
+        st.caption(f"Source: {source}")
 
     # 1. Load Data
     df, source = get_dashboard_data()
@@ -196,12 +207,12 @@ def main():
     st.divider()
 
     # 3. Hedge Strategy & Convergence (Unified View)
-    st.subheader("Hedge Strategy & Convergence")
+    st.subheader(f"Hedge Strategy & Convergence (Updated: {adj_time})")
     k_match = df[df['Platform'] == 'Kalshi'].dropna(subset=['Matched_Ticker'])
     p_side = df[df['Platform'] == 'Polymarket']
     
     if not k_match.empty:
-        with st.spinner("📈 Fetching Real-time Bids & Liquidity..."):
+        with st.spinner("📈 Fetching Real-time Bids..."):
             try:
                 from apis.orderbook import get_matched_orderbooks
                 
@@ -211,38 +222,26 @@ def main():
                     if p.empty: continue
                     p = p.iloc[0]
                     
-                    # Fetch fresh orderbooks for exact bid/volume
+                    # Fetch fresh orderbooks
                     kt, pt = k['Ticker'], p['Ticker']
                     obs = get_matched_orderbooks(kt, pt, levels=1)
-                    k_side_raw = k['Side']
-                    p_side_raw = p['Side']
+                    k_side_raw, p_side_raw = k['Side'], p['Side']
                     
-                    # Logic: We want the BID price for the side we HOLD (to sell)
                     k_b_list = obs.get('kalshi', {}).get(k_side_raw.lower(), {}).get('bids', [])
                     p_b_list = obs.get('polymarket', {}).get(p_side_raw.lower(), {}).get('bids', [])
                     
                     k_bid, k_vol = (k_b_list[0]['price'], k_b_list[0]['volume']) if k_b_list else (0, 0)
                     p_bid, p_vol = (p_b_list[0]['price'], p_b_list[0]['volume']) if p_b_list else (0, 0)
                     
-                    # Liquidity Checks
+                    combined = k_bid + p_bid
                     k_liq_ok = (k_vol >= VOLUME_PERCENTILE_THRESHOLD * k['Quantity']) or (k_vol * k_bid >= VOLUME_FIXED_THRESHOLD)
                     p_liq_ok = (p_vol >= VOLUME_PERCENTILE_THRESHOLD * p['Quantity']) or (p_vol * p_bid >= VOLUME_FIXED_THRESHOLD)
-                    combined = k_bid + p_bid
                     
-                    # Descriptive Sell Status
-                    if combined >= EXIT_TARGET and k_liq_ok and p_liq_ok:
-                        sell_status = "✅ Ready to Exit"
-                    elif combined >= EXIT_TARGET:
-                        sell_status = "⚠️ Low Volume"
-                    else:
-                        sell_status = "⏳ Pending Price"
+                    if combined >= EXIT_TARGET and k_liq_ok and p_liq_ok: sell_status = "✅ Ready to Exit"
+                    elif combined >= EXIT_TARGET: sell_status = "⚠️ Low Volume"
+                    else: sell_status = "⏳ Pending Price"
                     
-                    # Hedge Detection (Precise)
-                    # Standard: YES + NO or NO + YES
-                    if k_side_raw != p_side_raw:
-                        is_hedge = "Standard Hedge"
-                    else:
-                        is_hedge = "⚠️ Directional (Same Side)"
+                    is_hedge = "Standard Hedge" if k_side_raw != p_side_raw else "⚠️ Directional (Same Side)"
 
                     strategy_rows.append({
                         "Strategy": k['Title'],
@@ -258,7 +257,6 @@ def main():
                 
                 if strategy_rows:
                     strat_df = pd.DataFrame(strategy_rows)
-                    # Shift Index to start at 1
                     strat_df.index = range(1, len(strat_df) + 1)
                     st.dataframe(strat_df, use_container_width=True)
                 else:
@@ -270,7 +268,7 @@ def main():
 
     st.divider()
 
-    # 4. Aligned Exposure Visualization (Plotly Subplots - matching visualizer structure)
+    # 4. Aligned Exposure Visualization (Plotly Subplots - Synchronized Axes)
     st.subheader("Exposure Distribution (Aligned)")
     
     pos_only = df[df['Ticker'] != 'CASH'].copy()
@@ -278,85 +276,56 @@ def main():
         from plotly.subplots import make_subplots
         import plotly.graph_objects as go
         
-        # 1. Create a stable PairID to align them
         def get_pair_key(row):
-            t = str(row['Ticker'])
-            m = str(row.get('Matched_Ticker', ''))
-            if not m or m.lower() in ['nan', '', 'none']:
-                return tuple(sorted([t]))
+            t, m = str(row['Ticker']), str(row.get('Matched_Ticker', ''))
+            if not m or m.lower() in ['nan', '', 'none']: return tuple(sorted([t]))
             return tuple(sorted([t, m]))
 
         pos_only['PairID'] = pos_only.apply(get_pair_key, axis=1)
         
-        # 2. Aggregate into unique pairs
-        k_df = pos_only[pos_only['Platform'] == 'Kalshi'].copy()
-        p_df = pos_only[pos_only['Platform'] == 'Polymarket'].copy()
-        
+        k_df, p_df = pos_only[pos_only['Platform'] == 'Kalshi'], pos_only[pos_only['Platform'] == 'Polymarket']
         all_pids = sorted(list(set(k_df['PairID'].tolist() + p_df['PairID'].tolist())))
         pair_list = []
         
         for pid in all_pids:
-            k_row = k_df[k_df['PairID'] == pid]
-            p_row = p_df[p_df['PairID'] == pid]
-            
-            title = k_row['Title'].iloc[0] if not k_row.empty else p_row['Title'].iloc[0]
-            k_val = k_row['Value_USD'].sum() if not k_row.empty else 0
-            p_val = p_row['Value_USD'].sum() if not p_row.empty else 0
-            
+            kr, pr = k_df[k_df['PairID'] == pid], p_df[p_df['PairID'] == pid]
+            title = kr['Title'].iloc[0] if not kr.empty else pr['Title'].iloc[0]
+            kv, pv = kr['Value_USD'].sum() if not kr.empty else 0, pr['Value_USD'].sum() if not pr.empty else 0
             pair_list.append({
-                'PairID': pid,
-                'Title': title,
-                'K_Val': k_val,
-                'P_Val': p_val,
-                'K_Qty': k_row['Quantity'].iloc[0] if not k_row.empty else 0,
-                'P_Qty': p_row['Quantity'].iloc[0] if not p_row.empty else 0,
-                'K_Side': k_row['Side'].iloc[0] if not k_row.empty else '',
-                'P_Side': p_row['Side'].iloc[0] if not p_row.empty else '',
-                'MaxVal': max(k_val, p_val)
+                'Title': title, 'K_Val': kv, 'P_Val': pv,
+                'K_Side': kr['Side'].iloc[0] if not kr.empty else '', 
+                'P_Side': pr['Side'].iloc[0] if not pr.empty else '',
+                'MaxVal': max(kv, pv)
             })
         
         aligned_df = pd.DataFrame(pair_list).sort_values('MaxVal', ascending=True)
         aligned_df['WrappedTitle'] = aligned_df['Title'].apply(wrap_label)
-
-        # Plotly Subplots (1 row, 2 cols)
-        fig_aligned = make_subplots(rows=1, cols=2, shared_yaxes=True, 
-                                   subplot_titles=(f"Kalshi", f"Polymarket"),
-                                   horizontal_spacing=0.05)
         
-        def side_color_plotly(side):
-            if side == 'YES': return '#2ecc71'
-            if side == 'NO': return '#e74c3c'
-            return '#bdc3c7'
+        # Calculate synchronized axis range
+        max_exp = max(aligned_df['K_Val'].max(), aligned_df['P_Val'].max()) * 1.2
 
-        # Kalshi Bars
+        fig_aligned = make_subplots(rows=1, cols=2, shared_yaxes=True, 
+                                   subplot_titles=("Kalshi Exposure", "Polymarket Exposure"),
+                                   horizontal_spacing=0.02)
+        
+        color_map = {'YES': '#2ecc71', 'NO': '#e74c3c'}
+        
         fig_aligned.add_trace(go.Bar(
-            y=aligned_df['WrappedTitle'],
-            x=aligned_df['K_Val'],
-            name='Kalshi',
-            orientation='h',
-            marker_color=[side_color_plotly(s) for s in aligned_df['K_Side']],
-            text=aligned_df.apply(lambda r: f"${r['K_Val']:,.2f}" if r['K_Val']>0 else "", axis=1),
-            textposition='auto'
+            y=aligned_df['WrappedTitle'], x=aligned_df['K_Val'], name='Kalshi', orientation='h',
+            marker_color=[color_map.get(s, '#bdc3c7') for s in aligned_df['K_Side']],
+            text=aligned_df['K_Val'].apply(lambda v: f"${v:,.2f}" if v>0 else ""), textposition='auto'
         ), row=1, col=1)
         
-        # Polymarket Bars
         fig_aligned.add_trace(go.Bar(
-            y=aligned_df['WrappedTitle'],
-            x=aligned_df['P_Val'],
-            name='Polymarket',
-            orientation='h',
-            marker_color=[side_color_plotly(s) for s in aligned_df['P_Side']],
-            text=aligned_df.apply(lambda r: f"${r['P_Val']:,.2f}" if r['P_Val']>0 else "", axis=1),
-            textposition='auto'
+            y=aligned_df['WrappedTitle'], x=aligned_df['P_Val'], name='Polymarket', orientation='h',
+            marker_color=[color_map.get(s, '#bdc3c7') for s in aligned_df['P_Side']],
+            text=aligned_df['P_Val'].apply(lambda v: f"${v:,.2f}" if v>0 else ""), textposition='auto'
         ), row=1, col=2)
         
-        fig_aligned.update_layout(
-            template="plotly_dark",
-            height=max(500, len(aligned_df)*80),
-            showlegend=False,
-            margin=dict(l=20, r=20, t=60, b=20),
-            yaxis=dict(autorange="reversed") # To match visualizer sorting if needed, but ascending=True in sort_values already handles it
-        )
+        fig_aligned.update_layout(template="plotly_dark", height=max(500, len(aligned_df)*75), showlegend=False, margin=dict(l=10, r=10, t=50, b=10))
+        # Sync X-axes
+        fig_aligned.update_xaxes(range=[0, max_exp], row=1, col=1)
+        fig_aligned.update_xaxes(range=[0, max_exp], row=1, col=2)
         
         st.plotly_chart(fig_aligned, use_container_width=True)
     else:
