@@ -35,7 +35,7 @@ from history.history_writer import (
 
 KALSHI_CSV = "Data/kalshi_markets.csv"
 POLYMARKET_CSV = "Data/polymarket_markets.csv"
-MATCHES_CSV = "Data/predicted_equivalent_markets_with_close_times.csv"
+MATCHES_CSV = "Data/predicted_equivalent_markets.csv"
 ARBITRAGE_CSV = "Data/arbitrage_opportunities.csv"
 LIQUIDITY_VERIFIED_CSV = "Data/liquidity_verified_arbitrage.csv"
 HISTORY_DIR = "Data/history"
