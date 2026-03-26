@@ -5,15 +5,19 @@ import os
 import textwrap
 from datetime import datetime, timedelta
 
-# Import your actual API logic directly
-import sys
-sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
+# Robust Path Handling
+current_dir = os.path.dirname(os.path.abspath(__file__))
+parent_dir = os.path.dirname(current_dir)
+if current_dir not in sys.path: sys.path.append(current_dir)
+if parent_dir not in sys.path: sys.path.append(parent_dir)
+
 try:
     from apis.portfolio import get_kalshi_positions, get_polymarket_positions, get_kalshi_balance, get_polymarket_balance
     from matching.semantic_matching import generate_semantic_matches
 except ImportError:
-    from apis.portfolio import get_kalshi_positions, get_polymarket_positions, get_kalshi_balance, get_polymarket_balance
-    from matching.semantic_matching import generate_semantic_matches
+    # If the above fails, try importing with 'src.' prefix
+    from src.apis.portfolio import get_kalshi_positions, get_polymarket_positions, get_kalshi_balance, get_polymarket_balance
+    from src.matching.semantic_matching import generate_semantic_matches
 
 # --- CONFIGURATION ---
 PORTFOLIO_CSV = os.path.join("Data", "portfolio.csv")
