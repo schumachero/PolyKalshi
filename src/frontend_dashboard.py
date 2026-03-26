@@ -86,29 +86,52 @@ def transform_to_dataframe(k_pos, p_pos):
 def get_dashboard_data():
     """Tries live API first, falls back to local CSV."""
     if KALSHI_KEY_READY and POLY_KEY_READY:
-        with st.spinner("🛰️ Synchronizing with Market APIs..."):
-            try:
-                # 1. Fetch Positions
+        try:
+            # 1. Fetch Positions
+            with st.spinner("🛰️ Fetching Live Market Positions..."):
                 k_pos = get_kalshi_positions()
                 p_pos = get_polymarket_positions()
                 df = transform_to_dataframe(k_pos, p_pos)
-                
-                # 2. Fetch Cash
+            
+            # 2. RUN SEMANTIC MATCHING ON LIVE DATA
+            with st.spinner("🧠 Finding Hedge Pairs (Semantic Matching)..."):
+                try:
+                    # Filter for positions (ignoring any existing CASH rows)
+                    k_df = df[df['Platform'] == 'Kalshi'].rename(columns={'Ticker':'market_ticker', 'Title':'market_title'})
+                    p_df = df[df['Platform'] == 'Polymarket'].rename(columns={'Ticker':'market_ticker', 'Title':'market_title'})
+                    
+                    if not k_df.empty and not p_df.empty:
+                        matches = generate_semantic_matches(k_df, p_df, threshold=0.3)
+                        # Map matches back
+                        for _, m in matches.iterrows():
+                            kt = m['kalshi_market_ticker']
+                            pt = m['polymarket_market_ticker']
+                            score = m['semantic_score']
+                            
+                            # Inject into main DF
+                            df.loc[(df['Platform'] == 'Kalshi') & (df['Ticker'] == kt), 'Matched_Ticker'] = pt
+                            df.loc[(df['Platform'] == 'Kalshi') & (df['Ticker'] == kt), 'Match_Score'] = score
+                            df.loc[(df['Platform'] == 'Polymarket') & (df['Ticker'] == pt), 'Matched_Ticker'] = kt
+                            df.loc[(df['Platform'] == 'Polymarket') & (df['Ticker'] == pt), 'Match_Score'] = score
+                except Exception as e:
+                    st.warning(f"Semantic Matching on cloud failed: {e}")
+
+            # 3. Fetch Cash
+            with st.spinner("💰 Calculating Cash Balances..."):
                 k_bal = get_kalshi_balance()
                 k_cash = k_bal.get('available_cents', 0) / 100
                 p_cash = get_polymarket_balance(WALLET_ADDR)
                 
-                # Add Cash Rows
                 cash_rows = [
                     {"Platform": "Kalshi", "Ticker": "CASH", "Title": "Kalshi Available Cash", "Side": "N/A", "Value_USD": k_cash, "Profit_USD": 0, "Quantity": k_cash, "Price": 1.0},
                     {"Platform": "Polymarket", "Ticker": "CASH", "Title": "Polymarket USDC.e", "Side": "N/A", "Value_USD": p_cash, "Profit_USD": 0, "Quantity": p_cash, "Price": 1.0}
                 ]
                 df = pd.concat([df, pd.DataFrame(cash_rows)], ignore_index=True)
                 
-                if not df.empty:
-                    return df, "Live API"
-            except Exception as e:
-                st.warning(f"Live fetch failed: {e}")
+            if not df.empty:
+                return df, "Live API"
+        except Exception as e:
+            st.warning(f"Live fetch failed: {e}")
     
     # Fallback to local CSV
     if os.path.exists(PORTFOLIO_CSV):
@@ -123,7 +146,7 @@ def get_dashboard_data():
 # --- MAIN UI ---
 
 def main():
-    st.markdown("# 🏛 PolyKalshi Terminal")
+    st.markdown("# PolyKalshi Terminal")
     
     # sidebar
     with st.sidebar:
@@ -134,7 +157,7 @@ def main():
         else: st.markdown('<div class="status-box status-missing">MISSING: POLYGON</div>', unsafe_allow_html=True)
         
         st.divider()
-        if st.button("🚀 Force Global Re-Sync"):
+        if st.button("Force Global Re-Sync"):
             st.cache_data.clear()
             st.rerun()
 
@@ -160,7 +183,7 @@ def main():
     st.divider()
 
     # 3. Strategy / Matched Pairs Section (Improved Readability)
-    st.subheader("🎯 Active Strategy Pairs")
+    st.subheader("Active Strategy Pairs")
     k_match = df[df['Platform'] == 'Kalshi'].dropna(subset=['Matched_Ticker'])
     p_side = df[df['Platform'] == 'Polymarket']
     
@@ -191,7 +214,7 @@ def main():
     st.divider()
 
     # 4. Side-by-Side Charts (Better Alignment)
-    st.subheader("📊 Portfolio Allocations")
+    st.subheader("Portfolio Allocations")
     col_chart1, col_chart2 = st.columns(2)
     
     # Pre-process for wrapped labels
@@ -199,7 +222,7 @@ def main():
     pos_only['WrappedTitle'] = pos_only['Title'].apply(wrap_label)
     
     with col_chart1:
-        st.markdown("#### 🏛 Kalshi Holdings")
+        st.markdown("#### Kalshi Holdings")
         k_data = pos_only[pos_only['Platform'] == 'Kalshi'].sort_values('Value_USD', ascending=True)
         if not k_data.empty:
             fig_k = px.bar(k_data, y='WrappedTitle', x='Value_USD', orientation='h', 
@@ -211,7 +234,7 @@ def main():
         else: st.info("No Kalshi positions.")
 
     with col_chart2:
-        st.markdown("#### 💎 Polymarket Holdings")
+        st.markdown("#### Polymarket Holdings")
         p_data = pos_only[pos_only['Platform'] == 'Polymarket'].sort_values('Value_USD', ascending=True)
         if not p_data.empty:
             fig_p = px.bar(p_data, y='WrappedTitle', x='Value_USD', orientation='h', 
@@ -224,7 +247,7 @@ def main():
 
     # 5. History Section
     st.divider()
-    st.subheader("📈 Total Equity Growth")
+    st.subheader("Total Equity Growth")
     history_file = "Data/history/run_log.csv"
     if os.path.exists(history_file):
         try:
