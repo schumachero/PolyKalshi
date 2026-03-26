@@ -404,11 +404,10 @@ def print_portfolio_summary(wallet_address: str = None):
         if bal:
             k_cash = bal.get('available_cents', 0) / 100
             k_val = bal.get('portfolio_value_cents', 0) / 100
-            k_total = k_val # Kalshi's portfolio_value usually includes cash + positions
+            k_total = k_val
             total_value_usd += k_total
-            total_value_usd += k_cash
             print(f"  Cash available : ${_cents_to_dollars(int(k_cash*100))[1:]}")
-            print(f"  Portfolio value: ${_cents_to_dollars(int(k_val*100))[1:]}")
+            print(f"  Portfolio value: ${_cents_to_dollars(int(k_val*100))[1:]} (includes cash)")
 
             all_rows.append({
                 "Platform": "Kalshi",
