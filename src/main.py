@@ -6,8 +6,12 @@ from pathlib import Path
 
 import pandas as pd
 
-# Ensure we can import from the same directory (src)
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+# --- CLEAN PATH SETUP ---
+SRC_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = os.path.dirname(SRC_DIR)
+for path in [SRC_DIR, PROJECT_ROOT]:
+    if path not in sys.path:
+        sys.path.insert(0, path)
 
 from apis.kalshi_api import main as run_kalshi_api
 from apis.polymarket_api import main as run_polymarket_api

@@ -8,11 +8,36 @@ import traceback
 from datetime import datetime, timedelta
 
 # --- CLEAN PATH SETUP ---
+import sys
+import os
+
 # Entry point is src/frontend_dashboard.py
-# We want to import from sibling folders 'apis' and 'matching'
-SRC_DIR = os.path.dirname(os.path.abspath(__file__))
+SRC_DIR = os.path.dirname(os.path.abspath(__file__)) # .../src
+PROJECT_ROOT = os.path.dirname(SRC_DIR)             # .../
+
+# Ensure the 'src' directory is in sys.path
 if SRC_DIR not in sys.path:
     sys.path.insert(0, SRC_DIR)
+if PROJECT_ROOT not in sys.path:
+    sys.path.append(PROJECT_ROOT)
+
+# Handle common Streamlit Cloud import quirks with namespace packages
+# If 'apis' is partially loaded or conflicting, clear it to allow fresh resolution from 'src'
+if 'apis' in sys.modules and not hasattr(sys.modules['apis'], '__path__'):
+    del sys.modules['apis']
+
+try:
+    from apis.portfolio import get_kalshi_positions, get_polymarket_positions, get_kalshi_balance, get_polymarket_balance
+    from matching.semantic_matching import generate_semantic_matches
+except ImportError:
+    # If the above fails, try absolute import from root
+    try:
+        from src.apis.portfolio import get_kalshi_positions, get_polymarket_positions, get_kalshi_balance, get_polymarket_balance
+        from src.matching.semantic_matching import generate_semantic_matches
+    except ImportError as e:
+        st.error(f"Import Error: {e}. Check if 'src' or 'apis' is missing.")
+except Exception as e:
+    st.error(f"Critical Dependency Error: {e}")
 
 # --- CONFIGURATION ---
 PORTFOLIO_CSV = os.path.join("Data", "portfolio.csv")
@@ -94,10 +119,6 @@ def get_dashboard_data():
     """Tries live API first, falls back to local CSV."""
     if KALSHI_KEY_READY and POLY_KEY_READY:
         try:
-            # Absolute, clean imports from the 'src' directory added to sys.path above
-            from apis.portfolio import get_kalshi_positions, get_polymarket_positions, get_kalshi_balance, get_polymarket_balance
-            from matching.semantic_matching import generate_semantic_matches
-
             # 1. Fetch Positions
             with st.spinner("🛰️ Fetching Live Market Positions..."):
                 k_pos = get_kalshi_positions()

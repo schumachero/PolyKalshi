@@ -2,19 +2,18 @@ import os
 import pandas as pd
 from dotenv import load_dotenv
 
-# Import our portfolio and semantic matching logic
-try:
-    from apis.portfolio import get_kalshi_positions, get_polymarket_positions
-    from apis.orderbook import get_matched_orderbooks
-    from matching.semantic_matching import generate_semantic_matches
-    from notifications.telegram_bot import send_telegram_message
-except ImportError:
-    import sys
-    sys.path.append(os.path.dirname(os.path.abspath(__file__)))
-    from apis.portfolio import get_kalshi_positions, get_polymarket_positions
-    from apis.orderbook import get_matched_orderbooks
-    from matching.semantic_matching import generate_semantic_matches
-    from notifications.telegram_bot import send_telegram_message
+# --- CLEAN PATH SETUP ---
+import sys
+SRC_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = os.path.dirname(SRC_DIR)
+for path in [SRC_DIR, PROJECT_ROOT]:
+    if path not in sys.path:
+        sys.path.insert(0, path)
+
+from apis.portfolio import get_kalshi_positions, get_polymarket_positions
+from apis.orderbook import get_matched_orderbooks
+from matching.semantic_matching import generate_semantic_matches
+from notifications.telegram_bot import send_telegram_message
 
 # --- CONFIGURATION ---
 MATCH_THRESHOLD = 0.75      # Score above which we consider positions a pair
