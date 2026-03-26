@@ -93,7 +93,6 @@ def get_dashboard_data():
             # Absolute, clean imports from the 'src' directory added to sys.path above
             from apis.portfolio import get_kalshi_positions, get_polymarket_positions, get_kalshi_balance, get_polymarket_balance
             from matching.semantic_matching import generate_semantic_matches
-            from apis.orderbook import get_matched_orderbooks
 
             # 1. Fetch Positions
             with st.spinner("🛰️ Fetching Live Market Positions..."):
@@ -215,11 +214,11 @@ def main():
                     # Fetch fresh orderbooks for exact bid/volume
                     kt, pt = k['Ticker'], p['Ticker']
                     obs = get_matched_orderbooks(kt, pt, levels=1)
-                    k_side = k['Side'].lower()
-                    p_side_str = p['Side'].lower()
+                    k_side_raw = k['Side']
+                    p_side_raw = p['Side']
                     
-                    k_b_list = obs.get('kalshi', {}).get(k_side, {}).get('bids', [])
-                    p_b_list = obs.get('polymarket', {}).get(p_side_str, {}).get('bids', [])
+                    k_b_list = obs.get('kalshi', {}).get(k_side_raw.lower(), {}).get('bids', [])
+                    p_b_list = obs.get('polymarket', {}).get(p_side_raw.lower(), {}).get('bids', [])
                     
                     k_bid, k_vol = (k_b_list[0]['price'], k_b_list[0]['volume']) if k_b_list else (0, 0)
                     p_bid, p_vol = (p_b_list[0]['price'], p_b_list[0]['volume']) if p_b_list else (0, 0)
@@ -229,23 +228,31 @@ def main():
                     p_liq_ok = (p_vol >= VOLUME_PERCENTILE_THRESHOLD * p['Quantity']) or (p_vol * p_bid >= VOLUME_FIXED_THRESHOLD)
                     combined = k_bid + p_bid
                     
-                    is_sellable = "✅ Yes" if (k_liq_ok and p_liq_ok and combined >= EXIT_TARGET) else "❌ No"
+                    # Descriptive Sell Status
+                    if combined >= EXIT_TARGET and k_liq_ok and p_liq_ok:
+                        sell_status = "✅ Ready to Exit"
+                    elif combined >= EXIT_TARGET:
+                        sell_status = "⚠️ Low Volume"
+                    else:
+                        sell_status = "⏳ Pending Price"
                     
+                    # Hedging Detection
+                    is_hedge = "Standard" if k_side_raw != p_side_raw else "⚠️ Directional Same-Side"
+
                     strategy_rows.append({
-                        "Market Description": k['Title'],
-                        "Combined Bid": f"${combined:.3f}",
-                        "Sellable?": is_sellable,
-                        "Kalshi Side": k['Side'],
-                        "Kalshi Price": f"${k_bid:.3f}",
-                        "Poly Side": p['Side'],
-                        "Poly Price": f"${p_bid:.3f}",
+                        "Description": k['Title'],
+                        "Combo Bid": f"${combined:.3f}",
+                        "Sellable Status": sell_status,
+                        "Hedge Type": is_hedge,
+                        "Kalshi": f"{k_side_raw} (${k_bid:.2f})",
+                        "Poly": f"{p_side_raw} (${p_bid:.2f})",
                         "Gap": f"${max(0.99-combined, 0):.3f}"
                     })
                 
                 if strategy_rows:
                     strat_df = pd.DataFrame(strategy_rows)
                     # Shift Index to start at 1
-                    strat_df.index = strat_df.index + 1
+                    strat_df.index = range(1, len(strat_df) + 1)
                     st.dataframe(strat_df, use_container_width=True)
                 else:
                     st.info("No active strategy pairs detected.")
