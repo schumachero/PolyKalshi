@@ -6,24 +6,18 @@ import sys
 import textwrap
 from datetime import datetime, timedelta
 
-# Robust Path Handling
+# --- PATH SETUP ---
+import sys
+import os
 current_dir = os.path.dirname(os.path.abspath(__file__))
 parent_dir = os.path.dirname(current_dir)
 if current_dir not in sys.path: sys.path.append(current_dir)
 if parent_dir not in sys.path: sys.path.append(parent_dir)
 
-try:
-    from apis.portfolio import get_kalshi_positions, get_polymarket_positions, get_kalshi_balance, get_polymarket_balance
-    from matching.semantic_matching import generate_semantic_matches
-except ImportError:
-    # If the above fails, try importing with 'src.' prefix
-    from src.apis.portfolio import get_kalshi_positions, get_polymarket_positions, get_kalshi_balance, get_polymarket_balance
-    from src.matching.semantic_matching import generate_semantic_matches
-
 # --- CONFIGURATION ---
 PORTFOLIO_CSV = os.path.join("Data", "portfolio.csv")
 EXIT_TARGET = 0.99
-TIME_OFFSET_HOURS = 1 # Shift forward to Europe/Stockholm (UTC+1)
+TIME_OFFSET_HOURS = 1 
 
 # Check for API keys
 KALSHI_KEY_READY = os.getenv("KALSHI_ACCESS_KEY") is not None
@@ -94,6 +88,8 @@ def get_dashboard_data():
     """Tries live API first, falls back to local CSV."""
     if KALSHI_KEY_READY and POLY_KEY_READY:
         try:
+            from apis.portfolio import get_kalshi_positions, get_polymarket_positions, get_kalshi_balance, get_polymarket_balance
+            from matching.semantic_matching import generate_semantic_matches
             # 1. Fetch Positions
             with st.spinner("🛰️ Fetching Live Market Positions..."):
                 k_pos = get_kalshi_positions()
