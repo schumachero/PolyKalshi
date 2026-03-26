@@ -20,23 +20,24 @@ for path in [PROJECT_ROOT, SRC_DIR]:
     if path not in sys.path:
         sys.path.insert(0, path)
 
-# Use absolute 'src.' imports to avoid name collisions with generic 'apis'
+# Define defaults first to avoid NameError if imports fail non-traditionally
+def get_kalshi_positions(): return []
+def get_polymarket_positions(): return []
+def get_kalshi_balance(): return {}
+def get_polymarket_balance(addr): return 0
+def generate_semantic_matches(k, p, threshold=0.3): return pd.DataFrame()
+
+# Use absolute 'src.' imports (standard for Streamlit Cloud with src/ folder)
 try:
     from src.apis.portfolio import get_kalshi_positions, get_polymarket_positions, get_kalshi_balance, get_polymarket_balance
     from src.matching.semantic_matching import generate_semantic_matches
 except ImportError:
     try:
-        # Fallback for local environments where 'src' might already be the root or in path
+        # Fallback for environments where 'src' is the root or already in path
         from apis.portfolio import get_kalshi_positions, get_polymarket_positions, get_kalshi_balance, get_polymarket_balance
         from matching.semantic_matching import generate_semantic_matches
     except ImportError as e:
-        st.error(f"Import Error: {e}. Please ensure the project structure is intact.")
-        # Define empty functions to avoid NameError later if imports fail
-        def get_kalshi_positions(): return []
-        def get_polymarket_positions(): return []
-        def get_kalshi_balance(): return {}
-        def get_polymarket_balance(addr): return 0
-        def generate_semantic_matches(k, p, threshold=0.3): return pd.DataFrame()
+        st.error(f"Import Warning: {e}. Dashboard functionality may be limited.")
 
 # --- CONFIGURATION ---
 PORTFOLIO_CSV = os.path.join("Data", "portfolio.csv")
