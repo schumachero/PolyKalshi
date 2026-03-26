@@ -7,17 +7,12 @@ import textwrap
 import traceback
 from datetime import datetime, timedelta
 
-# --- ABSOLUTE PATH SETUP ---
-# On Streamlit Cloud: /mount/src/polykalshi/src/frontend_dashboard.py
-# Root: /mount/src/polykalshi/
-FILE_PATH = os.path.abspath(__file__)
-SRC_DIR = os.path.dirname(FILE_PATH)
-ROOT_DIR = os.path.dirname(SRC_DIR)
-
-# Ensure both are in path
-for path in [SRC_DIR, ROOT_DIR]:
-    if path not in sys.path:
-        sys.path.insert(0, path)
+# --- CLEAN PATH SETUP ---
+# Entry point is src/frontend_dashboard.py
+# We want to import from sibling folders 'apis' and 'matching'
+SRC_DIR = os.path.dirname(os.path.abspath(__file__))
+if SRC_DIR not in sys.path:
+    sys.path.insert(0, SRC_DIR)
 
 # --- CONFIGURATION ---
 PORTFOLIO_CSV = os.path.join("Data", "portfolio.csv")
@@ -95,16 +90,10 @@ def get_dashboard_data():
     """Tries live API first, falls back to local CSV."""
     if KALSHI_KEY_READY and POLY_KEY_READY:
         try:
-            # Lazy imports
-            try:
-                from apis.portfolio import get_kalshi_positions, get_polymarket_positions, get_kalshi_balance, get_polymarket_balance
-                from matching.semantic_matching import generate_semantic_matches
-                from apis.orderbook import get_matched_orderbooks
-            except ImportError as ie:
-                # Fallback to absolute src. prefix
-                from src.apis.portfolio import get_kalshi_positions, get_polymarket_positions, get_kalshi_balance, get_polymarket_balance
-                from src.matching.semantic_matching import generate_semantic_matches
-                from src.apis.orderbook import get_matched_orderbooks
+            # Absolute, clean imports from the 'src' directory added to sys.path above
+            from apis.portfolio import get_kalshi_positions, get_polymarket_positions, get_kalshi_balance, get_polymarket_balance
+            from matching.semantic_matching import generate_semantic_matches
+            from apis.orderbook import get_matched_orderbooks
 
             # 1. Fetch Positions
             with st.spinner("🛰️ Fetching Live Market Positions..."):
@@ -215,8 +204,7 @@ def main():
     if not k_match.empty:
         with st.spinner("📈 Fetching Real-time Bids & Liquidity..."):
             try:
-                try: from apis.orderbook import get_matched_orderbooks
-                except ImportError: from src.apis.orderbook import get_matched_orderbooks
+                from apis.orderbook import get_matched_orderbooks
                 
                 strategy_rows = []
                 for _, k in k_match.iterrows():
