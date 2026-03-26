@@ -73,7 +73,7 @@ st.markdown("""
 
 # --- UTILITIES ---
 
-def wrap_label(text, width=35):
+def wrap_label(text, width=40): # Widened wrap
     if not text: return ""
     return "<br>".join(textwrap.wrap(str(text), width=width))
 
@@ -133,18 +133,27 @@ def get_dashboard_data():
                     p_df = df[df['Platform'] == 'Polymarket'].rename(columns={'Ticker':'market_ticker', 'Title':'market_title', 'rules':'rules_text'})
                     
                     if not k_df.empty and not p_df.empty:
-                        matches = generate_semantic_matches(k_df, p_df, threshold=0.3)
+                        matches = generate_semantic_matches(k_df, p_df, threshold=0.45) # Raised threshold for accuracy
+                        
+                        # Use sets to ensure 1-to-1 matching and avoid overwriting better matches
+                        matched_kalshi = set()
+                        matched_poly = set()
+
                         # Map matches back
                         for _, m in matches.iterrows():
                             kt = m['kalshi_market_ticker']
                             pt = m['polymarket_market_ticker']
                             score = m['semantic_score']
                             
-                            # Inject into main DF
-                            df.loc[(df['Platform'] == 'Kalshi') & (df['Ticker'] == kt), 'Matched_Ticker'] = pt
-                            df.loc[(df['Platform'] == 'Kalshi') & (df['Ticker'] == kt), 'Match_Score'] = score
-                            df.loc[(df['Platform'] == 'Polymarket') & (df['Ticker'] == pt), 'Matched_Ticker'] = kt
-                            df.loc[(df['Platform'] == 'Polymarket') & (df['Ticker'] == pt), 'Match_Score'] = score
+                            if kt not in matched_kalshi and pt not in matched_poly:
+                                # Inject into main DF (only the first/best match)
+                                df.loc[(df['Platform'] == 'Kalshi') & (df['Ticker'] == kt), 'Matched_Ticker'] = pt
+                                df.loc[(df['Platform'] == 'Kalshi') & (df['Ticker'] == kt), 'Match_Score'] = score
+                                df.loc[(df['Platform'] == 'Polymarket') & (df['Ticker'] == pt), 'Matched_Ticker'] = kt
+                                df.loc[(df['Platform'] == 'Polymarket') & (df['Ticker'] == pt), 'Match_Score'] = score
+                                
+                                matched_kalshi.add(kt)
+                                matched_poly.add(pt)
                 except Exception as e_match:
                     st.warning(f"Semantic Matching on cloud failed: {e_match}")
 
@@ -328,7 +337,8 @@ def main():
         aligned_df['WrappedTitle'] = aligned_df['Title'].apply(wrap_label)
         
         # Calculate synchronized axis range
-        max_exp = max(aligned_df['K_Val'].max(), aligned_df['P_Val'].max()) * 1.2
+        max_exp = max(aligned_df['K_Val'].max(), aligned_df['P_Val'].max(), 0) * 1.2
+        if max_exp < 10: max_exp = 100 # Floor for better display
 
         fig_aligned = make_subplots(rows=1, cols=2, shared_yaxes=True, 
                                    subplot_titles=("Kalshi Exposure", "Polymarket Exposure"),
@@ -348,10 +358,17 @@ def main():
             text=aligned_df['P_Val'].apply(lambda v: f"${v:,.2f}" if v>0 else ""), textposition='auto'
         ), row=1, col=2)
         
-        fig_aligned.update_layout(template="plotly_dark", height=max(500, len(aligned_df)*90), showlegend=False, margin=dict(l=150, r=20, t=50, b=50))
+        fig_aligned.update_layout(
+            template="plotly_dark", 
+            height=max(600, len(aligned_df)*75), # More height per row for readability
+            showlegend=False, 
+            margin=dict(l=400, r=40, t=80, b=60), # Even larger margin for long titles
+            hovermode="y unified",
+            bargap=0.4 # Wider gap
+        )
         # Sync X-axes
-        fig_aligned.update_xaxes(range=[0, max_exp], row=1, col=1)
-        fig_aligned.update_xaxes(range=[0, max_exp], row=1, col=2)
+        fig_aligned.update_xaxes(range=[0, max_exp], row=1, col=1, title="Exposure ($)")
+        fig_aligned.update_xaxes(range=[0, max_exp], row=1, col=2, title="Exposure ($)")
         
         st.plotly_chart(fig_aligned, use_container_width=True)
     else:

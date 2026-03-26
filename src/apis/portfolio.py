@@ -175,8 +175,10 @@ def get_kalshi_positions() -> list[dict]:
             # Use the bid price for the side we hold to get current market value
             cur_price = details.get("yes_bid", 0) if side == "YES" else details.get("no_bid", 0)
             
-            # Standardize to cents for internal consistency if needed
-            exp_cents = int(float(pos.get("market_exposure_dollars", 0) or 0) * 100)
+            # Calculate live exit value (market value) in cents
+            # If bid price is 0, fall back to exposure from API
+            live_val_cents = int(qty * cur_price * 100) if cur_price > 0 else int(float(pos.get("market_exposure_dollars", 0) or 0) * 100)
+            
             pnl_cents = int(float(pos.get("realized_pnl_dollars", 0) or 0) * 100)
             traded_cents = int(float(pos.get("total_traded_dollars", 0) or 0) * 100)
 
@@ -186,12 +188,12 @@ def get_kalshi_positions() -> list[dict]:
                 "rules":               details.get("rules", ""),
                 "side":                side,
                 "quantity":            int(qty),
-                "avg_price_cents":     int((exp_cents / qty)) if qty > 0 else 0, 
+                "avg_price_cents":     int((traded_cents / qty)) if qty > 0 else 0, # Better avg price
                 "current_price":       cur_price,
                 "realized_pnl_cents":  pnl_cents,
                 "total_traded_cents":  traded_cents,
                 "close_time":          pos.get("close_time", ""),
-                "market_exposure_cents": exp_cents,
+                "market_exposure_cents": live_val_cents, # This is NOW the live value
             })
 
         cursor = data.get("cursor")
