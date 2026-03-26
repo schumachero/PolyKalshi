@@ -67,7 +67,9 @@ def transform_to_dataframe(k_pos, p_pos):
             "Value_USD": p.get("market_exposure_cents", 0) / 100,
             "Profit_USD": p.get("realized_pnl_cents", 0) / 100,
             "Matched_Ticker": p.get("matched_ticker", ""),
-            "Match_Score": p.get("match_score", 0)
+            "Match_Score": p.get("match_score", 0),
+            "close_time": p.get("close_time", ""),
+            "rules": p.get("rules", "")
         })
     # Process Polymarket
     for p in p_pos:
@@ -81,7 +83,9 @@ def transform_to_dataframe(k_pos, p_pos):
             "Value_USD": p.get("current_value", 0),
             "Profit_USD": p.get("pnl", 0),
             "Matched_Ticker": p.get("matched_ticker", ""),
-            "Match_Score": p.get("match_score", 0)
+            "Match_Score": p.get("match_score", 0),
+            "close_time": p.get("close_time", ""),
+            "rules": p.get("rules", "")
         })
     return pd.DataFrame(rows)
 
@@ -104,8 +108,8 @@ def get_dashboard_data():
             with st.spinner("🧠 Finding Hedge Pairs (Semantic Matching)..."):
                 try:
                     # Filter for positions (ignoring any existing CASH rows)
-                    k_df = df[df['Platform'] == 'Kalshi'].rename(columns={'Ticker':'market_ticker', 'Title':'market_title'})
-                    p_df = df[df['Platform'] == 'Polymarket'].rename(columns={'Ticker':'market_ticker', 'Title':'market_title'})
+                    k_df = df[df['Platform'] == 'Kalshi'].rename(columns={'Ticker':'market_ticker', 'Title':'market_title', 'rules':'rules_text'})
+                    p_df = df[df['Platform'] == 'Polymarket'].rename(columns={'Ticker':'market_ticker', 'Title':'market_title', 'rules':'rules_text'})
                     
                     if not k_df.empty and not p_df.empty:
                         matches = generate_semantic_matches(k_df, p_df, threshold=0.3)
@@ -133,8 +137,8 @@ def get_dashboard_data():
                 p_cash = get_polymarket_balance(WALLET_ADDR)
                 
                 cash_rows = [
-                    {"Platform": "Kalshi", "Ticker": "CASH", "Title": "Kalshi Available Cash", "Side": "N/A", "Value_USD": k_cash, "Profit_USD": 0, "Quantity": k_cash, "Price": 1.0},
-                    {"Platform": "Polymarket", "Ticker": "CASH", "Title": "Polymarket USDC.e", "Side": "N/A", "Value_USD": p_cash, "Profit_USD": 0, "Quantity": p_cash, "Price": 1.0}
+                    {"Platform": "Kalshi", "Ticker": "CASH", "Title": "Kalshi Available Cash", "Side": "N/A", "Value_USD": k_cash, "Profit_USD": 0, "Quantity": k_cash, "Price": 1.0, "close_time": "", "rules": ""},
+                    {"Platform": "Polymarket", "Ticker": "CASH", "Title": "Polymarket USDC.e", "Side": "N/A", "Value_USD": p_cash, "Profit_USD": 0, "Quantity": p_cash, "Price": 1.0, "close_time": "", "rules": ""}
                 ]
                 df = pd.concat([df, pd.DataFrame(cash_rows)], ignore_index=True)
                 
@@ -307,7 +311,7 @@ def main():
 
         fig_aligned = make_subplots(rows=1, cols=2, shared_yaxes=True, 
                                    subplot_titles=("Kalshi Exposure", "Polymarket Exposure"),
-                                   horizontal_spacing=0.02)
+                                   horizontal_spacing=0.1)
         
         color_map = {'YES': '#2ecc71', 'NO': '#e74c3c'}
         
@@ -323,7 +327,7 @@ def main():
             text=aligned_df['P_Val'].apply(lambda v: f"${v:,.2f}" if v>0 else ""), textposition='auto'
         ), row=1, col=2)
         
-        fig_aligned.update_layout(template="plotly_dark", height=max(500, len(aligned_df)*75), showlegend=False, margin=dict(l=10, r=10, t=50, b=10))
+        fig_aligned.update_layout(template="plotly_dark", height=max(500, len(aligned_df)*90), showlegend=False, margin=dict(l=150, r=20, t=50, b=50))
         # Sync X-axes
         fig_aligned.update_xaxes(range=[0, max_exp], row=1, col=1)
         fig_aligned.update_xaxes(range=[0, max_exp], row=1, col=2)

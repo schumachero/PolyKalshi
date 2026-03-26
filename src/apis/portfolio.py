@@ -292,7 +292,7 @@ def get_polymarket_positions(wallet_address: str = None) -> list[dict]:
                 "initial_value": float(pos.get("initialValue", 0) or 0),
                 "current_value": float(pos.get("currentValue", 0) or 0),
                 "pnl":           float(pos.get("cashPnl", 0) or 0),
-                "end_date":      pos.get("endDate", ""),
+                "close_time":      pos.get("endDate", ""),
             })
         
         if len(raw) < limit:
