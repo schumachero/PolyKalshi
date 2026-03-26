@@ -2,16 +2,22 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import os
+import sys
 import textwrap
+import traceback
 from datetime import datetime, timedelta
 
-# --- PATH SETUP ---
-import sys
-import os
-current_dir = os.path.dirname(os.path.abspath(__file__))
-parent_dir = os.path.dirname(current_dir)
-if current_dir not in sys.path: sys.path.append(current_dir)
-if parent_dir not in sys.path: sys.path.append(parent_dir)
+# --- ABSOLUTE PATH SETUP ---
+# On Streamlit Cloud: /mount/src/polykalshi/src/frontend_dashboard.py
+# Root: /mount/src/polykalshi/
+FILE_PATH = os.path.abspath(__file__)
+SRC_DIR = os.path.dirname(FILE_PATH)
+ROOT_DIR = os.path.dirname(SRC_DIR)
+
+# Ensure both are in path
+for path in [SRC_DIR, ROOT_DIR]:
+    if path not in sys.path:
+        sys.path.insert(0, path)
 
 # --- CONFIGURATION ---
 PORTFOLIO_CSV = os.path.join("Data", "portfolio.csv")
@@ -90,9 +96,15 @@ def get_dashboard_data():
     if KALSHI_KEY_READY and POLY_KEY_READY:
         try:
             # Lazy imports
-            from apis.portfolio import get_kalshi_positions, get_polymarket_positions, get_kalshi_balance, get_polymarket_balance
-            from matching.semantic_matching import generate_semantic_matches
-            from apis.orderbook import get_matched_orderbooks
+            try:
+                from apis.portfolio import get_kalshi_positions, get_polymarket_positions, get_kalshi_balance, get_polymarket_balance
+                from matching.semantic_matching import generate_semantic_matches
+                from apis.orderbook import get_matched_orderbooks
+            except ImportError as ie:
+                # Fallback to absolute src. prefix
+                from src.apis.portfolio import get_kalshi_positions, get_polymarket_positions, get_kalshi_balance, get_polymarket_balance
+                from src.matching.semantic_matching import generate_semantic_matches
+                from src.apis.orderbook import get_matched_orderbooks
 
             # 1. Fetch Positions
             with st.spinner("🛰️ Fetching Live Market Positions..."):
@@ -120,13 +132,16 @@ def get_dashboard_data():
                             df.loc[(df['Platform'] == 'Kalshi') & (df['Ticker'] == kt), 'Match_Score'] = score
                             df.loc[(df['Platform'] == 'Polymarket') & (df['Ticker'] == pt), 'Matched_Ticker'] = kt
                             df.loc[(df['Platform'] == 'Polymarket') & (df['Ticker'] == pt), 'Match_Score'] = score
-                except Exception as e:
-                    st.warning(f"Semantic Matching on cloud failed: {e}")
+                except Exception as e_match:
+                    st.warning(f"Semantic Matching on cloud failed: {e_match}")
 
             # 3. Fetch Cash
             with st.spinner("💰 Calculating Cash Balances..."):
                 k_bal = get_kalshi_balance()
-                k_cash = k_bal.get('available_cents', 0) / 100
+                k_cash = 0
+                if k_bal and isinstance(k_bal, dict):
+                    k_cash = k_bal.get('available_cents', 0) / 100
+                
                 p_cash = get_polymarket_balance(WALLET_ADDR)
                 
                 cash_rows = [
@@ -138,7 +153,10 @@ def get_dashboard_data():
             if not df.empty:
                 return df, "Live API"
         except Exception as e:
-            st.warning(f"Live fetch failed: {e}")
+            err_msg = traceback.format_exc()
+            st.error(f"Live fetch failed: {e}")
+            with st.expander("🔍 Show Debug Traceback"):
+                st.code(err_msg)
     
     # Fallback to local CSV
     if os.path.exists(PORTFOLIO_CSV):
@@ -196,50 +214,55 @@ def main():
     
     if not k_match.empty:
         with st.spinner("📈 Fetching Real-time Bids & Liquidity..."):
-            from apis.orderbook import get_matched_orderbooks
-            strategy_rows = []
-            for _, k in k_match.iterrows():
-                p = p_side[p_side['Ticker'] == k['Matched_Ticker']]
-                if p.empty: continue
-                p = p.iloc[0]
+            try:
+                try: from apis.orderbook import get_matched_orderbooks
+                except ImportError: from src.apis.orderbook import get_matched_orderbooks
                 
-                # Fetch fresh orderbooks for exact bid/volume
-                kt, pt = k['Ticker'], p['Ticker']
-                obs = get_matched_orderbooks(kt, pt, levels=1)
-                k_side = k['Side'].lower()
-                p_side_str = p['Side'].lower()
+                strategy_rows = []
+                for _, k in k_match.iterrows():
+                    p = p_side[p_side['Ticker'] == k['Matched_Ticker']]
+                    if p.empty: continue
+                    p = p.iloc[0]
+                    
+                    # Fetch fresh orderbooks for exact bid/volume
+                    kt, pt = k['Ticker'], p['Ticker']
+                    obs = get_matched_orderbooks(kt, pt, levels=1)
+                    k_side = k['Side'].lower()
+                    p_side_str = p['Side'].lower()
+                    
+                    k_b_list = obs.get('kalshi', {}).get(k_side, {}).get('bids', [])
+                    p_b_list = obs.get('polymarket', {}).get(p_side_str, {}).get('bids', [])
+                    
+                    k_bid, k_vol = (k_b_list[0]['price'], k_b_list[0]['volume']) if k_b_list else (0, 0)
+                    p_bid, p_vol = (p_b_list[0]['price'], p_b_list[0]['volume']) if p_b_list else (0, 0)
+                    
+                    # Liquidity Checks
+                    k_liq_ok = (k_vol >= VOLUME_PERCENTILE_THRESHOLD * k['Quantity']) or (k_vol * k_bid >= VOLUME_FIXED_THRESHOLD)
+                    p_liq_ok = (p_vol >= VOLUME_PERCENTILE_THRESHOLD * p['Quantity']) or (p_vol * p_bid >= VOLUME_FIXED_THRESHOLD)
+                    combined = k_bid + p_bid
+                    
+                    is_sellable = "✅ Yes" if (k_liq_ok and p_liq_ok and combined >= EXIT_TARGET) else "❌ No"
+                    
+                    strategy_rows.append({
+                        "Market Description": k['Title'],
+                        "Combined Bid": f"${combined:.3f}",
+                        "Sellable?": is_sellable,
+                        "Kalshi Side": k['Side'],
+                        "Kalshi Price": f"${k_bid:.3f}",
+                        "Poly Side": p['Side'],
+                        "Poly Price": f"${p_bid:.3f}",
+                        "Gap": f"${max(0.99-combined, 0):.3f}"
+                    })
                 
-                k_b_list = obs.get('kalshi', {}).get(k_side, {}).get('bids', [])
-                p_b_list = obs.get('polymarket', {}).get(p_side_str, {}).get('bids', [])
-                
-                k_bid, k_vol = (k_b_list[0]['price'], k_b_list[0]['volume']) if k_b_list else (0, 0)
-                p_bid, p_vol = (p_b_list[0]['price'], p_b_list[0]['volume']) if p_b_list else (0, 0)
-                
-                # Liquidity Checks
-                k_liq_ok = (k_vol >= VOLUME_PERCENTILE_THRESHOLD * k['Quantity']) or (k_vol * k_bid >= VOLUME_FIXED_THRESHOLD)
-                p_liq_ok = (p_vol >= VOLUME_PERCENTILE_THRESHOLD * p['Quantity']) or (p_vol * p_bid >= VOLUME_FIXED_THRESHOLD)
-                combined = k_bid + p_bid
-                
-                is_sellable = "✅ Yes" if (k_liq_ok and p_liq_ok and combined >= EXIT_TARGET) else "❌ No"
-                
-                strategy_rows.append({
-                    "Market Description": k['Title'],
-                    "Combined Bid": f"${combined:.3f}",
-                    "Sellable?": is_sellable,
-                    "Kalshi Side": k['Side'],
-                    "Kalshi Price": f"${k_bid:.3f}",
-                    "Poly Side": p['Side'],
-                    "Poly Price": f"${p_bid:.3f}",
-                    "Gap": f"${max(0.99-combined, 0):.3f}"
-                })
-            
-            if strategy_rows:
-                strat_df = pd.DataFrame(strategy_rows)
-                # Shift Index to start at 1
-                strat_df.index = strat_df.index + 1
-                st.dataframe(strat_df, use_container_width=True)
-            else:
-                st.info("No active strategy pairs detected.")
+                if strategy_rows:
+                    strat_df = pd.DataFrame(strategy_rows)
+                    # Shift Index to start at 1
+                    strat_df.index = strat_df.index + 1
+                    st.dataframe(strat_df, use_container_width=True)
+                else:
+                    st.info("No active strategy pairs detected.")
+            except Exception as e_strat:
+                st.warning(f"Strategy view failed: {e_strat}")
     else:
         st.info("No strategy pairs detected. Ensure you have positions on both platforms.")
 
