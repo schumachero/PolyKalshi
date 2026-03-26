@@ -270,14 +270,13 @@ def main():
 
     st.divider()
 
-    # 4. Aligned Exposure Visualization (Exact Mirror of visualize_portfolios.py)
+    # 4. Aligned Exposure Visualization (Plotly Subplots - matching visualizer structure)
     st.subheader("Exposure Distribution (Aligned)")
     
     pos_only = df[df['Ticker'] != 'CASH'].copy()
-    cash_df = df[df['Ticker'] == 'CASH']
-    
     if not pos_only.empty:
-        import matplotlib.pyplot as plt
+        from plotly.subplots import make_subplots
+        import plotly.graph_objects as go
         
         # 1. Create a stable PairID to align them
         def get_pair_key(row):
@@ -317,68 +316,49 @@ def main():
             })
         
         aligned_df = pd.DataFrame(pair_list).sort_values('MaxVal', ascending=True)
-        aligned_df['Y_Label'] = aligned_df['Title'].apply(lambda x: "\n".join(textwrap.wrap(str(x), width=30)))
+        aligned_df['WrappedTitle'] = aligned_df['Title'].apply(wrap_label)
 
-        # Totals
-        total_k = df[df['Platform'] == 'Kalshi']['Value_USD'].sum()
-        total_p = df[df['Platform'] == 'Polymarket']['Value_USD'].sum()
-        grand_total = total_k + total_p
-        cash_k = cash_df[cash_df['Platform'] == 'Kalshi']['Value_USD'].sum()
-        cash_p = cash_df[cash_df['Platform'] == 'Polymarket']['Value_USD'].sum()
-
-        # Visualization
-        plt.style.use('dark_background')
-        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 10))
+        # Plotly Subplots (1 row, 2 cols)
+        fig_aligned = make_subplots(rows=1, cols=2, shared_yaxes=True, 
+                                   subplot_titles=(f"Kalshi", f"Polymarket"),
+                                   horizontal_spacing=0.05)
         
-        def side_color(side):
+        def side_color_plotly(side):
             if side == 'YES': return '#2ecc71'
             if side == 'NO': return '#e74c3c'
             return '#bdc3c7'
 
-        def get_qty_label(qty, side, value):
-            if value <= 0: return ""
-            q_val = float(qty)
-            qty_str = f"{int(q_val)}" if q_val.is_integer() else f"{q_val:.2f}"
-            return f"[{qty_str} {side}]  ${value:.2f}"
-
-        # Kalshi Plot
-        colors_k = [side_color(s) for s in aligned_df['K_Side']]
-        bars1 = ax1.barh(aligned_df['Y_Label'], aligned_df['K_Val'], color=colors_k, alpha=0.8)
-        ax1.set_title(f'Kalshi\nBets: ${total_k - cash_k:.2f}', fontsize=14, fontweight='bold', color='#2ecc71')
-        ax1.tick_params(axis='y', labelsize=10)
+        # Kalshi Bars
+        fig_aligned.add_trace(go.Bar(
+            y=aligned_df['WrappedTitle'],
+            x=aligned_df['K_Val'],
+            name='Kalshi',
+            orientation='h',
+            marker_color=[side_color_plotly(s) for s in aligned_df['K_Side']],
+            text=aligned_df.apply(lambda r: f"${r['K_Val']:,.2f}" if r['K_Val']>0 else "", axis=1),
+            textposition='auto'
+        ), row=1, col=1)
         
-        for i, bar in enumerate(bars1):
-            v = aligned_df.iloc[i]['K_Val']
-            if v > 0:
-                label = get_qty_label(aligned_df.iloc[i]['K_Qty'], aligned_df.iloc[i]['K_Side'], v)
-                ax1.text(v + (grand_total * 0.005), bar.get_y() + bar.get_height()/2, label, 
-                         va='center', fontsize=9, fontweight='bold', color='white')
-
-        # Polymarket Plot
-        colors_p = [side_color(s) for s in aligned_df['P_Side']]
-        bars2 = ax2.barh(aligned_df['Y_Label'], aligned_df['P_Val'], color=colors_p, alpha=0.8)
-        ax2.set_title(f'Polymarket\nBets: ${total_p - cash_p:.2f}', fontsize=14, fontweight='bold', color='#3498db')
-        ax2.tick_params(axis='y', labelsize=10)
+        # Polymarket Bars
+        fig_aligned.add_trace(go.Bar(
+            y=aligned_df['WrappedTitle'],
+            x=aligned_df['P_Val'],
+            name='Polymarket',
+            orientation='h',
+            marker_color=[side_color_plotly(s) for s in aligned_df['P_Side']],
+            text=aligned_df.apply(lambda r: f"${r['P_Val']:,.2f}" if r['P_Val']>0 else "", axis=1),
+            textposition='auto'
+        ), row=1, col=2)
         
-        for i, bar in enumerate(bars2):
-            v = aligned_df.iloc[i]['P_Val']
-            if v > 0:
-                label = get_qty_label(aligned_df.iloc[i]['P_Qty'], aligned_df.iloc[i]['P_Side'], v)
-                ax2.text(v + (grand_total * 0.005), bar.get_y() + bar.get_height()/2, label, 
-                         va='center', fontsize=9, fontweight='bold', color='white')
-
-        total_cash = cash_k + cash_p
-        total_bets = (total_k - cash_k) + (total_p - cash_p)
-        
-        fig.suptitle(
-            f'PolyKalshi Aligned Portfolio Summary\n'
-            f'Cash: ${total_cash:.2f}  |  Bets: ${total_bets:.2f}  |  Total: ${grand_total:.2f}', 
-            fontsize=18, fontweight='bold', y=0.98
+        fig_aligned.update_layout(
+            template="plotly_dark",
+            height=max(500, len(aligned_df)*80),
+            showlegend=False,
+            margin=dict(l=20, r=20, t=60, b=20),
+            yaxis=dict(autorange="reversed") # To match visualizer sorting if needed, but ascending=True in sort_values already handles it
         )
         
-        fig.subplots_adjust(wspace=0.6, left=0.25, right=0.90)
-        plt.tight_layout(rect=[0, 0.03, 1, 0.88])
-        st.pyplot(fig)
+        st.plotly_chart(fig_aligned, use_container_width=True)
     else:
         st.info("No positions to visualize.")
 
