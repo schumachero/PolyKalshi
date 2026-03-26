@@ -203,17 +203,13 @@ def main():
         st.header("Connection")
         if KALSHI_KEY_READY: 
             st.markdown('<div class="status-box status-ok">CONNECTED: KALSHI</div>', unsafe_allow_html=True)
-            k_preview = os.getenv("KALSHI_ACCESS_KEY", "")[:8] + "..."
-            st.caption(f"Key: {k_preview}")
         else: 
             st.markdown('<div class="status-box status-missing">MISSING: KALSHI</div>', unsafe_allow_html=True)
             
         if POLY_KEY_READY: 
-            st.markdown('<div class="status-box status-ok">CONNECTED: POLYGON</div>', unsafe_allow_html=True)
-            w_preview = WALLET_ADDR[:6] + "..." + WALLET_ADDR[-4:] if len(WALLET_ADDR) > 10 else WALLET_ADDR
-            st.caption(f"Wallet: {w_preview}")
+            st.markdown('<div class="status-box status-ok">CONNECTED: POLYMARKET</div>', unsafe_allow_html=True)
         else: 
-            st.markdown('<div class="status-box status-missing">MISSING: POLYGON</div>', unsafe_allow_html=True)
+            st.markdown('<div class="status-box status-missing">MISSING: POLYMARKET</div>', unsafe_allow_html=True)
         
         st.divider()
         if st.button("🔄 Force Global Re-Sync", help="Clears cache and refetches everything"):
