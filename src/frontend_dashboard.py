@@ -9,10 +9,9 @@ from datetime import datetime, timedelta
 import sys
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 try:
-    from apis.portfolio import get_kalshi_positions, get_polymarket_positions
+    from apis.portfolio import get_kalshi_positions, get_polymarket_positions, get_kalshi_balance, get_polymarket_balance
 except ImportError:
-    # Handle direct execution vs module execution context
-    from apis.portfolio import get_kalshi_positions, get_polymarket_positions
+    from apis.portfolio import get_kalshi_positions, get_polymarket_positions, get_kalshi_balance, get_polymarket_balance
 
 # --- CONFIGURATION ---
 PORTFOLIO_CSV = os.path.join("Data", "portfolio.csv")
@@ -22,6 +21,7 @@ TIME_OFFSET_HOURS = 1 # Shift forward to Europe/Stockholm (UTC+1)
 # Check for API keys
 KALSHI_KEY_READY = os.getenv("KALSHI_ACCESS_KEY") is not None
 POLY_KEY_READY = os.getenv("POLYMARKET_WALLET_ADDRESS") is not None
+WALLET_ADDR = os.getenv("POLYMARKET_WALLET_ADDRESS", "")
 
 # Page Config
 st.set_page_config(
@@ -88,15 +88,29 @@ def get_dashboard_data():
     if KALSHI_KEY_READY and POLY_KEY_READY:
         with st.spinner("🛰️ Synchronizing with Market APIs..."):
             try:
+                # 1. Fetch Positions
                 k_pos = get_kalshi_positions()
                 p_pos = get_polymarket_positions()
                 df = transform_to_dataframe(k_pos, p_pos)
+                
+                # 2. Fetch Cash
+                k_bal = get_kalshi_balance()
+                k_cash = k_bal.get('available_cents', 0) / 100
+                p_cash = get_polymarket_balance(WALLET_ADDR)
+                
+                # Add Cash Rows
+                cash_rows = [
+                    {"Platform": "Kalshi", "Ticker": "CASH", "Title": "Kalshi Available Cash", "Side": "N/A", "Value_USD": k_cash, "Profit_USD": 0, "Quantity": k_cash, "Price": 1.0},
+                    {"Platform": "Polymarket", "Ticker": "CASH", "Title": "Polymarket USDC.e", "Side": "N/A", "Value_USD": p_cash, "Profit_USD": 0, "Quantity": p_cash, "Price": 1.0}
+                ]
+                df = pd.concat([df, pd.DataFrame(cash_rows)], ignore_index=True)
+                
                 if not df.empty:
                     return df, "Live API"
             except Exception as e:
                 st.warning(f"Live fetch failed: {e}")
     
-    # Fallback
+    # Fallback to local CSV
     if os.path.exists(PORTFOLIO_CSV):
         df = pd.read_csv(PORTFOLIO_CSV)
         # Standardize columns if reading from old CSV
@@ -111,23 +125,18 @@ def get_dashboard_data():
 def main():
     st.markdown("# 🏛 PolyKalshi Terminal")
     
-    # Sidebar Status
+    # sidebar
     with st.sidebar:
-        st.header("Terminal Control")
+        st.header("Connection")
         if KALSHI_KEY_READY: st.markdown('<div class="status-box status-ok">CONNECTED: KALSHI</div>', unsafe_allow_html=True)
-        else: st.markdown('<div class="status-box status-missing">MISSING: KALSHI KEYS</div>', unsafe_allow_html=True)
-        
+        else: st.markdown('<div class="status-box status-missing">MISSING: KALSHI</div>', unsafe_allow_html=True)
         if POLY_KEY_READY: st.markdown('<div class="status-box status-ok">CONNECTED: POLYGON</div>', unsafe_allow_html=True)
-        else: st.markdown('<div class="status-box status-missing">MISSING: POLY WALLET</div>', unsafe_allow_html=True)
+        else: st.markdown('<div class="status-box status-missing">MISSING: POLYGON</div>', unsafe_allow_html=True)
         
         st.divider()
-        if st.button("🚀 Force Global Sync"):
+        if st.button("🚀 Force Global Re-Sync"):
             st.cache_data.clear()
             st.rerun()
-            
-        st.divider()
-        st.markdown("**Filters**")
-        platforms = st.multiselect("Visible Platforms", ["Kalshi", "Polymarket"], default=["Kalshi", "Polymarket"])
 
     # 1. Load Data
     df, source = get_dashboard_data()
@@ -135,27 +144,27 @@ def main():
         st.error("No data found. Ensure your keys are in Streamlit Secrets.")
         return
 
-    f_df = df[df['Platform'].isin(platforms)]
-    
     # 2. Key Metrics
-    m1, m2, m3 = st.columns(3)
-    total_val = f_df['Value_USD'].sum()
-    total_profit = f_df['Profit_USD'].sum()
-    # Corrected time with offset
+    total_val = df['Value_USD'].sum()      # Cash + Positions
+    total_profit = df['Profit_USD'].sum()
+    cash_val = df[df['Ticker'] == 'CASH']['Value_USD'].sum()
+    invested_val = total_val - cash_val
     adj_time = (datetime.now() + timedelta(hours=TIME_OFFSET_HOURS)).strftime("%H:%M:%S")
 
-    m1.metric("Total Net Equity", f"${total_val:,.2f}", f"{total_profit:+.2f} Total Profit")
-    m2.metric("Data Context", source)
-    m3.metric("Terminal Time", adj_time, help="Adjusted to Stockholm/Europe Time")
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("Net Asset Value", f"${total_val:,.2f}", f"{total_profit:+.2f} Profit")
+    m2.metric("Portfolio Weight", f"${invested_val:,.2f}")
+    m3.metric("Available Cash", f"${cash_val:,.2f}")
+    m4.metric("Last Update", adj_time)
 
     st.divider()
 
-    # 3. Hedge Convergence Tracker
-    st.subheader("🎯 Active Hedge Strategies")
-    k_match = f_df[f_df['Platform'] == 'Kalshi'].dropna(subset=['Matched_Ticker'])
-    p_side = f_df[f_df['Platform'] == 'Polymarket']
+    # 3. Strategy / Matched Pairs Section (Improved Readability)
+    st.subheader("🎯 Active Strategy Pairs")
+    k_match = df[df['Platform'] == 'Kalshi'].dropna(subset=['Matched_Ticker'])
+    p_side = df[df['Platform'] == 'Polymarket']
     
-    conv_rows = []
+    strategy_rows = []
     for _, k in k_match.iterrows():
         p = p_side[p_side['Ticker'] == k['Matched_Ticker']]
         if not p.empty:
@@ -163,27 +172,30 @@ def main():
             try:
                 k_p, p_p = float(k['Price']), float(p['Price'])
                 combined = k_p + p_p
-                conv_rows.append({
-                    "Strategy Pair": f"{k['Ticker']} / {p['Ticker']}",
-                    "Current Value": f"${combined:.3f}",
-                    "Profit Gap": f"${max(0.99-combined, 0):.3f}",
-                    "Confidence": f"{k.get('Match_Score', 0):.2f}"
+                strategy_rows.append({
+                    "Market Description": k['Title'],
+                    "Kalshi Side": k['Side'],
+                    "Kalshi Price": f"${k_p:.3f}",
+                    "Poly Side": p['Side'],
+                    "Poly Price": f"${p_p:.3f}",
+                    "Combined Bid": f"${combined:.3f}",
+                    "Target Gap": f"${max(0.99-combined, 0):.3f}"
                 })
             except: pass
             
-    if conv_rows:
-        st.table(pd.DataFrame(conv_rows))
+    if strategy_rows:
+        st.dataframe(pd.DataFrame(strategy_rows), use_container_width=True)
     else:
-        st.info("No active hedge pairs detected. Run matching locally and push the CSV to see pairs here.")
+        st.info("No strategy pairs detected. Run matching locally.")
 
     st.divider()
 
-    # 4. Two-Column Position Split (Visualized like visualize_portfolios.py)
+    # 4. Side-by-Side Charts (Better Alignment)
     st.subheader("📊 Portfolio Allocations")
     col_chart1, col_chart2 = st.columns(2)
     
     # Pre-process for wrapped labels
-    pos_only = f_df[~f_df['Ticker'].str.contains("CASH", na=False)].copy()
+    pos_only = df[df['Ticker'] != 'CASH'].copy()
     pos_only['WrappedTitle'] = pos_only['Title'].apply(wrap_label)
     
     with col_chart1:
@@ -193,10 +205,10 @@ def main():
             fig_k = px.bar(k_data, y='WrappedTitle', x='Value_USD', orientation='h', 
                            color='Side', color_discrete_map={'YES':'#2ecc71','NO':'#e74c3c'},
                            text_auto='.2s', template="plotly_dark")
-            fig_k.update_layout(height=max(400, len(k_data)*60), margin=dict(l=0, r=20, t=20, b=20),
+            fig_k.update_layout(height=max(400, len(k_data)*80), margin=dict(l=0, r=20, t=20, b=20),
                                 yaxis=dict(title=None), xaxis=dict(title="Value in USD"))
             st.plotly_chart(fig_k, use_container_width=True)
-        else: st.info("No active Kalshi positions.")
+        else: st.info("No Kalshi positions.")
 
     with col_chart2:
         st.markdown("#### 💎 Polymarket Holdings")
@@ -205,28 +217,27 @@ def main():
             fig_p = px.bar(p_data, y='WrappedTitle', x='Value_USD', orientation='h', 
                            color='Side', color_discrete_map={'YES':'#3498db','NO':'#9b59b6'},
                            text_auto='.2s', template="plotly_dark")
-            fig_p.update_layout(height=max(400, len(p_data)*60), margin=dict(l=0, r=20, t=20, b=20),
+            fig_p.update_layout(height=max(400, len(p_data)*80), margin=dict(l=0, r=20, t=20, b=20),
                                 yaxis=dict(title=None), xaxis=dict(title="Value in USD"))
             st.plotly_chart(fig_p, use_container_width=True)
-        else: st.info("No active Polymarket positions.")
+        else: st.info("No Polymarket positions.")
 
     # 5. History Section
     st.divider()
-    st.subheader("📈 Portfolio History")
+    st.subheader("📈 Total Equity Growth")
     history_file = "Data/history/run_log.csv"
     if os.path.exists(history_file):
         try:
             h_df = pd.read_csv(history_file)
-            fig_h = px.line(h_df, x='snapshot_time', y='total_value_usd', 
-                            title="Total Value Over Time", template="plotly_dark")
+            fig_h = px.line(h_df, x='snapshot_time', y='total_value_usd', title="NAV Over Time", template="plotly_dark")
             st.plotly_chart(fig_h, use_container_width=True)
         except: st.info("History log found but unreadable.")
     else:
-        st.info("💡 History is logged locally. Push `Data/history/run_log.csv` to GitHub to see your growth chart here.")
+        st.info("💡 Run a local scan to generate performance logs.")
 
-    # 6. Audit Log
-    with st.expander("🔍 Detailed Audit Log"):
-        st.dataframe(f_df, use_container_width=True)
+    # 6. Audit
+    with st.expander("🔍 Portfolio Audit Log"):
+        st.dataframe(df, use_container_width=True)
 
 if __name__ == "__main__":
     main()
