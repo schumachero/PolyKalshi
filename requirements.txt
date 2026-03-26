@@ -8,3 +8,4 @@ matplotlib
 sentence-transformers
 streamlit
 plotly
+altair<5
