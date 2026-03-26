@@ -160,8 +160,11 @@ def get_dashboard_data():
 
 def main():
     st.markdown("# PolyKalshi Terminal")
+
+    # 1. Load Data (Move to top to avoid UnboundLocalError)
+    df, source = get_dashboard_data()
     
-    # sidebar
+    # 2. Sidebar
     with st.sidebar:
         st.header("Connection")
         if KALSHI_KEY_READY: 
@@ -183,10 +186,8 @@ def main():
             st.cache_data.clear()
             st.rerun()
         
-        st.caption(f"Source: {source}")
+        st.caption(f"Data Source: {source}")
 
-    # 1. Load Data
-    df, source = get_dashboard_data()
     if df.empty:
         st.error("No data found. Ensure your keys are in Streamlit Secrets.")
         return
