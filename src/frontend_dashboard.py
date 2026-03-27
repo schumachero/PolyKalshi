@@ -230,10 +230,12 @@ def main():
     adj_time = (datetime.now() + timedelta(hours=TIME_OFFSET_HOURS)).strftime("%H:%M:%S")
 
     m1, m2, m3, m4 = st.columns(4)
-    m1.metric("Net Asset Value", f"${total_val:,.2f}", f"{total_profit:+.2f} Profit")
+    profit_pct = ((total_val + total_profit) / total_val * 100) - 100 if total_val != 0 else 0
+    m1.metric("Net Asset Value", f"${total_val:,.2f}", f"${total_profit:+.2f} ({profit_pct:+.2f}%) Profit")
     m2.metric("Portfolio Weight", f"${invested_val:,.2f}")
     m3.metric("Available Cash", f"${cash_val:,.2f}")
     m4.metric("Last Update", adj_time)
+
 
     st.divider()
 
