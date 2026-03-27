@@ -42,6 +42,7 @@ except ImportError:
 # --- CONFIGURATION ---
 PORTFOLIO_CSV = os.path.join("Data", "portfolio.csv")
 EXIT_TARGET = 0.99
+INVEST_TARGET = 0.95
 TIME_OFFSET_HOURS = 1 
 VOLUME_PERCENTILE_THRESHOLD = 0.20 # 20% of position
 VOLUME_FIXED_THRESHOLD = 10 # $10 worth
@@ -240,16 +241,18 @@ def main():
     st.divider()
 
     # 3. Hedge Strategy & Convergence (Unified View)
-    st.subheader(f"Hedge Strategy & Convergence (Updated: {adj_time})")
+    st.subheader(f"Hedge Strategy & Convergence")
     k_match = df[df['Platform'] == 'Kalshi'].dropna(subset=['Matched_Ticker'])
     p_side = df[df['Platform'] == 'Polymarket']
     
     if not k_match.empty:
-        with st.spinner("📈 Fetching Real-time Bids..."):
+        with st.spinner("📈 Fetching Real-time Market Depth..."):
             try:
                 from apis.orderbook import get_matched_orderbooks
                 
                 strategy_rows = []
+                invest_rows = []
+                
                 for _, k in k_match.iterrows():
                     p = p_side[p_side['Ticker'] == k['Matched_Ticker']]
                     if p.empty: continue
@@ -260,32 +263,59 @@ def main():
                     obs = get_matched_orderbooks(kt, pt, levels=1)
                     k_side_raw, p_side_raw = k['Side'], p['Side']
                     
+                    # --- EXIT LOGIC (BIDS) ---
                     k_b_list = obs.get('kalshi', {}).get(k_side_raw.lower(), {}).get('bids', [])
                     p_b_list = obs.get('polymarket', {}).get(p_side_raw.lower(), {}).get('bids', [])
                     
-                    k_bid, k_vol = (k_b_list[0]['price'], k_b_list[0]['volume']) if k_b_list else (0, 0)
-                    p_bid, p_vol = (p_b_list[0]['price'], p_b_list[0]['volume']) if p_b_list else (0, 0)
+                    k_bid, k_bid_vol = (k_b_list[0]['price'], k_b_list[0]['volume']) if k_b_list else (0, 0)
+                    p_bid, p_bid_vol = (p_b_list[0]['price'], p_b_list[0]['volume']) if p_b_list else (0, 0)
                     
-                    combined = k_bid + p_bid
-                    k_liq_ok = (k_vol >= VOLUME_PERCENTILE_THRESHOLD * k['Quantity']) or (k_vol * k_bid >= VOLUME_FIXED_THRESHOLD)
-                    p_liq_ok = (p_vol >= VOLUME_PERCENTILE_THRESHOLD * p['Quantity']) or (p_vol * p_bid >= VOLUME_FIXED_THRESHOLD)
+                    combined_bid = k_bid + p_bid
+                    k_bid_liq_ok = (k_bid_vol >= VOLUME_PERCENTILE_THRESHOLD * k['Quantity']) or (k_bid_vol * k_bid >= VOLUME_FIXED_THRESHOLD)
+                    p_bid_liq_ok = (p_bid_vol >= VOLUME_PERCENTILE_THRESHOLD * p['Quantity']) or (p_bid_vol * p_bid >= VOLUME_FIXED_THRESHOLD)
                     
-                    if combined >= EXIT_TARGET and k_liq_ok and p_liq_ok: sell_status = "✅ Ready to Exit"
-                    elif combined >= EXIT_TARGET: sell_status = "⚠️ Low Volume"
+                    if combined_bid >= EXIT_TARGET and k_bid_liq_ok and p_bid_liq_ok: sell_status = "✅ Ready to Exit"
+                    elif combined_bid >= EXIT_TARGET: sell_status = "⚠️ Low Bid Volume"
                     else: sell_status = "⏳ Pending Price"
                     
                     is_hedge = "Standard Hedge" if k_side_raw != p_side_raw else "⚠️ Directional (Same Side)"
 
                     strategy_rows.append({
                         "Strategy": k['Title'],
-                        "Combo Bid": f"${combined:.3f}",
+                        "Combo Bid": f"${combined_bid:.3f}",
                         "Sellable Status": sell_status,
                         "Hedge Type": is_hedge,
                         "Kalshi Side": f"{k_side_raw} (${k_bid:.3f})",
                         "Polymarket Side": f"{p_side_raw} (${p_bid:.3f})",
-                        "Gap": f"${max(0.99-combined, 0):.3f}",
+                        "Gap": f"${max(0.99-combined_bid, 0):.3f}",
                         "Total Value": f"${(k['Value_USD'] + p['Value_USD']):,.2f}",
                         "Total P&L": f"${(k['Profit_USD'] + p['Profit_USD']):,.2f}"
+                    })
+                    
+                    # --- INVESTMENT LOGIC (ASKS) ---
+                    k_a_list = obs.get('kalshi', {}).get(k_side_raw.lower(), {}).get('asks', [])
+                    p_a_list = obs.get('polymarket', {}).get(p_side_raw.lower(), {}).get('asks', [])
+                    
+                    k_ask, k_ask_vol = (k_a_list[0]['price'], k_a_list[0]['volume']) if k_a_list else (1.0, 0)
+                    p_ask, p_ask_vol = (p_a_list[0]['price'], p_a_list[0]['volume']) if p_a_list else (1.0, 0)
+                    
+                    combined_ask = k_ask + p_ask
+                    # Investment liquidity
+                    k_ask_liq_ok = (k_ask_vol * k_ask >= VOLUME_FIXED_THRESHOLD)
+                    p_ask_liq_ok = (p_ask_vol * p_ask >= VOLUME_FIXED_THRESHOLD)
+                    
+                    if combined_ask <= INVEST_TARGET and k_ask_liq_ok and p_ask_liq_ok: invest_status = "✅ Available Investment"
+                    elif combined_ask <= INVEST_TARGET: invest_status = "⚠️ Low Ask Volume"
+                    else: invest_status = "⏳ Awaiting Spread"
+                    
+                    invest_rows.append({
+                        "Strategy": k['Title'],
+                        "Combo Ask": f"${combined_ask:.3f}",
+                        "Investment Status": invest_status,
+                        "Kalshi Side (Ask)": f"{k_side_raw} (${k_ask:.3f})",
+                        "Polymarket Side (Ask)": f"{p_side_raw} (${p_ask:.3f})",
+                        "Arbitrage Opportunity": f"${max(1.0-combined_ask, 0):.3f}",
+                        "Current Holding Value": f"${(k['Value_USD'] + p['Value_USD']):,.2f}"
                     })
                 
                 if strategy_rows:
@@ -294,6 +324,15 @@ def main():
                     st.dataframe(strat_df, use_container_width=True)
                 else:
                     st.info("No active strategy pairs detected.")
+                    
+                st.subheader("Holding Expansion Opportunities")
+                if invest_rows:
+                    inv_df = pd.DataFrame(invest_rows)
+                    inv_df.index = range(1, len(inv_df) + 1)
+                    st.dataframe(inv_df, use_container_width=True)
+                else:
+                    st.info("No re-investment opportunities detected.")
+                    
             except Exception as e_strat:
                 st.warning(f"Strategy view failed: {e_strat}")
     else:
@@ -302,7 +341,7 @@ def main():
     st.divider()
 
     # 4. Aligned Exposure Visualization (Plotly Subplots - Synchronized Axes)
-    st.subheader("Exposure Distribution (Aligned)")
+    st.subheader("Exposure Distribution")
     
     pos_only = df[df['Ticker'] != 'CASH'].copy()
     if not pos_only.empty:
