@@ -51,6 +51,7 @@ VOLUME_FIXED_THRESHOLD = 10 # $10 worth
 KALSHI_KEY_READY = os.getenv("KALSHI_ACCESS_KEY") is not None
 POLY_KEY_READY = os.getenv("POLYMARKET_WALLET_ADDRESS") is not None
 WALLET_ADDR = os.getenv("POLYMARKET_WALLET_ADDRESS", "")
+DASHBOARD_PASSWORD = os.getenv("DASHBOARD_PASSWORD")
 
 # Page Config
 st.set_page_config(
@@ -77,6 +78,31 @@ st.markdown("""
 def wrap_label(text, width=40): # Widened wrap
     if not text: return ""
     return "<br>".join(textwrap.wrap(str(text), width=width))
+
+def check_password():
+    """Returns `True` if the user has correct password or if no password is required."""
+    if not DASHBOARD_PASSWORD:
+        return True
+
+    def password_entered():
+        """Checks whether a password entered by the user is correct."""
+        if st.session_state["password"] == DASHBOARD_PASSWORD:
+            st.session_state["password_correct"] = True
+            del st.session_state["password"]  # Don't store password
+        else:
+            st.session_state["password_correct"] = False
+
+    if st.session_state.get("password_correct", False):
+        return True
+
+    # Show input for password
+    st.markdown("### 🔒 Terminal Access Restricted")
+    st.text_input(
+        "Enter system access key:", type="password", on_change=password_entered, key="password"
+    )
+    if "password_correct" in st.session_state:
+        st.error("😕 Access Key incorrect")
+    return False
 
 def transform_to_dataframe(k_pos, p_pos):
     """Consolidates raw API dictionary lists into a unified DataFrame."""
@@ -194,6 +220,9 @@ def get_dashboard_data():
 # --- MAIN UI ---
 
 def main():
+    if not check_password():
+        st.stop()
+    
     st.markdown("# PolyKalshi Terminal")
 
     # 1. Load Data (Move to top to avoid UnboundLocalError)
