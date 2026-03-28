@@ -56,7 +56,8 @@ def log_to_history(total_value):
     if total_value is None:
         return
 
-    now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    # Use UTC + 1 to match user's local time (consistant with dashboard)
+    now = (datetime.datetime.now() + datetime.timedelta(hours=1)).strftime("%Y-%m-%d %H:%M:%S")
     header = ["Timestamp", "Total_Value_USD", "Total_Units"]
     
     file_exists = os.path.isfile(HISTORY_CSV)
