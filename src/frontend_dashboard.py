@@ -122,6 +122,7 @@ st.markdown("""
     .status-box { padding: 8px; border-radius: 8px; margin-bottom: 8px; font-size: 0.8em; text-align: center; }
     .status-ok { background: #065f46; color: #34d399; border: 1px solid #059669; }
     .status-missing { background: #7f1d1d; color: #f87171; border: 1px solid #b91c1c; }
+    .start-date-badge { position: absolute; top: 10px; right: 20px; color: #94a3b8; font-size: 0.85rem; background: rgba(30, 41, 59, 0.5); padding: 5px 12px; border-radius: 20px; border: 1px solid #334155; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -277,6 +278,16 @@ def main():
     
     st.markdown("# PolyKalshi Terminal")
 
+    # Start Date Badge logic
+    if os.path.exists(HISTORY_CSV):
+        try:
+            h_df_start = pd.read_csv(HISTORY_CSV)
+            if not h_df_start.empty:
+                start_ts = pd.to_datetime(h_df_start.iloc[0]['Timestamp']).strftime("%Y-%m-%d")
+                st.markdown(f'<div class="start-date-badge">📅 Start Date: {start_ts}</div>', unsafe_allow_html=True)
+        except:
+            pass
+
     # 1. Load Data (Move to top to avoid UnboundLocalError)
     df, source = get_dashboard_data()
     
@@ -302,7 +313,7 @@ def main():
         
         st.divider()
         with st.expander("Capital Management", expanded=False):
-            st.markdown("Record internal funding changes to keep APR accurate.")
+            st.markdown("Register injection/extraction of funds")
             # Simplified input to avoid potential JS module loading issues in some environments
             cap_change_raw = st.text_input("Amount (USD)", value="0.0")
             cap_change = 0.0
@@ -366,7 +377,7 @@ def main():
                         st.markdown("**Recent Injections/Withdrawals**")
                         st.dataframe(cap_history.sort_values("Timestamp", ascending=False).head(5), use_container_width=True, hide_index=True)
                     else:
-                        st.caption("No capital changes recorded since reset.")
+                        st.caption("No capital changes to display")
                 except:
                     pass
 
@@ -401,7 +412,7 @@ def main():
             pass # Fallback to 0 if history is malformed
 
     m1, m2, m3, m4 = st.columns(4)
-    m1.metric("Net Asset Value", f"${total_val:,.2f}", f"{total_profit:+.2f} ({profit_pct:+.2f}%) Since Reset")
+    m1.metric("Net Asset Value", f"${total_val:,.2f}", f"{total_profit:+.2f} ({profit_pct:+.2f}%)")
     m2.metric("Portfolio Weight", f"${invested_val:,.2f}")
     m3.metric("Available Cash", f"${cash_val:,.2f}")
     m4.metric("Last Update", adj_time)
