@@ -597,13 +597,13 @@ def main():
                         
                         hist_col1, hist_col2 = st.columns([3, 1])
                         with hist_col1:
-                            st.subheader("📊 Portfolio Value History")
+                            st.subheader("Portfolio Value History")
                         with hist_col2:
                             st.metric("Projected APR", f"{apr:+.1f}%", help="Annualized return based on history trajectory")
                     else:
-                        st.subheader("📊 Portfolio Value History")
+                        st.subheader("Portfolio Value History")
                 else:
-                    st.subheader("📊 Portfolio Value History")
+                    st.subheader("Portfolio Value History")
 
                 # Create a premium area chart
                 fig_hist = px.area(
