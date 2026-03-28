@@ -1,10 +1,15 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
+import plotly.graph_objects as go
 import os
 import sys
 import textwrap
 import traceback
+import csv
+import json
+import base64
+import requests
 from datetime import datetime, timedelta
 
 # --- CLEAN PATH SETUP ---
@@ -41,6 +46,53 @@ except ImportError:
 
 # --- CONFIGURATION ---
 PORTFOLIO_CSV = os.path.join("Data", "portfolio.csv")
+HISTORY_CSV = "Data/portfolio_history.csv"
+CAPITAL_CHANGES_CSV = "Data/capital_changes.csv"
+
+def push_to_github(file_path, content, message):
+    """
+    Commits a file to GitHub using the REST API.
+    Requires GH_TOKEN and GH_REPO in st.secrets.
+    """
+    try:
+        token = st.secrets.get("GH_TOKEN")
+        repo = st.secrets.get("GH_REPO", "ErikS003/PolyKalshi")
+        
+        if not token:
+            print("GH_TOKEN not found in secrets. Skipping GitHub push.")
+            return False
+
+        url = f"https://api.github.com/repos/{repo}/contents/{file_path}"
+        headers = {
+            "Authorization": f"token {token}",
+            "Accept": "application/vnd.github.v3+json"
+        }
+
+        # 1. Get the current file's SHA (required for update)
+        res = requests.get(url, headers=headers)
+        sha = None
+        if res.status_code == 200:
+            sha = res.json().get("sha")
+
+        # 2. Push the update
+        payload = {
+            "message": message,
+            "content": base64.b64encode(content.encode()).decode(),
+        }
+        if sha:
+            payload["sha"] = sha
+
+        put_res = requests.put(url, headers=headers, json=payload)
+        if put_res.status_code in [200, 201]:
+            st.toast(f"✅ Committed to GitHub: {os.path.basename(file_path)}")
+            return True
+        else:
+            st.error(f"GitHub Push Error ({put_res.status_code}): {put_res.text}")
+            return False
+    except Exception as e:
+        st.error(f"GitHub API Exception: {e}")
+        return False
+
 EXIT_TARGET = 0.99
 INVEST_TARGET = 0.95
 TIME_OFFSET_HOURS = 1 
@@ -247,6 +299,63 @@ def main():
             st.rerun()
         
         st.caption(f"Data Source: {source}")
+        
+        st.divider()
+        with st.expander("💰 Capital Management", expanded=False):
+            st.markdown("Record internal funding changes to keep APR accurate.")
+            cap_change = st.number_input("Amount (USD)", value=0.0, step=100.0, help="Positive for deposits, negative for withdrawals")
+            if st.button("Confirm Capital Change"):
+                if os.path.exists(HISTORY_CSV):
+                    try:
+                        h_df_tmp = pd.read_csv(HISTORY_CSV)
+                        if not h_df_tmp.empty and "Total_Units" in h_df_tmp.columns:
+                            # Current Price = Last Total Value / Last Total Units
+                            last_val = h_df_tmp.iloc[-1]["Total_Value_USD"]
+                            last_units = h_df_tmp.iloc[-1]["Total_Units"]
+                            
+                            if last_units > 0:
+                                current_price = last_val / last_units
+                                units_to_add = cap_change / current_price
+                                
+                                # 1. Update history units (locally)
+                                h_df_tmp.iloc[-1, h_df_tmp.columns.get_loc("Total_Units")] += units_to_add
+                                h_df_tmp.to_csv(HISTORY_CSV, index=False)
+                                
+                                # 2. Log to capital changes history (locally)
+                                cap_record = pd.DataFrame([{
+                                    "Timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                                    "Amount_USD": cap_change,
+                                    "Units_Adjusted": units_to_add,
+                                    "Price_At_Time": current_price
+                                }])
+                                if os.path.exists(CAPITAL_CHANGES_CSV):
+                                    cap_record.to_csv(CAPITAL_CHANGES_CSV, mode='a', header=False, index=False)
+                                else:
+                                    cap_record.to_csv(CAPITAL_CHANGES_CSV, index=False)
+
+                                # 3. PUSH TO GITHUB (If token available)
+                                push_to_github(HISTORY_CSV, h_df_tmp.to_csv(index=False), f"Update units: {cap_change:+} USD")
+                                
+                                # Re-read for logging history to GH
+                                with open(CAPITAL_CHANGES_CSV, 'r') as f_cap:
+                                    push_to_github(CAPITAL_CHANGES_CSV, f_cap.read(), f"Log injection: {cap_change:+} USD")
+
+                                st.success(f"Adjusted portfolio by {units_to_add:,.4f} units")
+                                st.cache_data.clear()
+                                st.rerun()
+                            else:
+                                st.error("Cannot adjust capital: Initial units are zero.")
+                    except Exception as e_cap:
+                        st.error(f"Failed to update units: {e_cap}")
+                else:
+                    st.warning("No history file found to update.")
+            
+            # Show Recent Injections
+            if os.path.exists(CAPITAL_CHANGES_CSV):
+                st.divider()
+                st.markdown("**Recent Injections/Withdrawals**")
+                cap_history = pd.read_csv(CAPITAL_CHANGES_CSV)
+                st.dataframe(cap_history.sort_values("Timestamp", ascending=False).head(5), use_container_width=True, hide_index=True)
 
     if df.empty:
         st.error("No data found. Ensure your keys are in Streamlit Secrets.")
@@ -254,14 +363,32 @@ def main():
 
     # 2. Key Metrics
     total_val = df['Value_USD'].sum()      # Cash + Positions
-    total_profit = df['Profit_USD'].sum()
     cash_val = df[df['Ticker'] == 'CASH']['Value_USD'].sum()
     invested_val = total_val - cash_val
     adj_time = (datetime.now() + timedelta(hours=TIME_OFFSET_HOURS)).strftime("%H:%M:%S")
 
+    # --- RESET-AWARE PROFIT ---
+    total_profit = 0.0
+    profit_pct = 0.0
+    if os.path.exists(HISTORY_CSV):
+        try:
+            h_df_metrics = pd.read_csv(HISTORY_CSV)
+            if not h_df_metrics.empty and "Total_Units" in h_df_metrics.columns:
+                first_h = h_df_metrics.iloc[0]
+                last_h = h_df_metrics.iloc[-1]
+                
+                initial_price = first_h['Total_Value_USD'] / first_h['Total_Units'] if first_h['Total_Units'] > 0 else 1.0
+                current_units = last_h['Total_Units']
+                
+                if current_units > 0:
+                    current_price = total_val / current_units
+                    total_profit = (current_price - initial_price) * current_units
+                    profit_pct = (current_price / initial_price - 1) * 100
+        except:
+            pass # Fallback to 0 if history is malformed
+
     m1, m2, m3, m4 = st.columns(4)
-    profit_pct = ((total_val + total_profit) / total_val * 100) - 100 if total_val != 0 else 0
-    m1.metric("Net Asset Value", f"${total_val:,.2f}", f"+${total_profit:.2f} ({profit_pct:+.2f}%) Profit")
+    m1.metric("Net Asset Value", f"${total_val:,.2f}", f"{total_profit:+.2f} ({profit_pct:+.2f}%) Since Reset")
     m2.metric("Portfolio Weight", f"${invested_val:,.2f}")
     m3.metric("Available Cash", f"${cash_val:,.2f}")
     m4.metric("Last Update", adj_time)
@@ -440,6 +567,95 @@ def main():
     else:
         st.info("No positions to visualize.")
 
+    # --- PORTFOLIO HISTORY ---
+    st.divider()
+    
+    if os.path.exists(HISTORY_CSV):
+        try:
+            h_df = pd.read_csv(HISTORY_CSV)
+            if not h_df.empty:
+                h_df['Timestamp'] = pd.to_datetime(h_df['Timestamp'])
+                h_df = h_df.sort_values('Timestamp')
+                
+                # --- SMART APR (Share Price Method) ---
+                if len(h_df) >= 2 and "Total_Units" in h_df.columns:
+                    h_df['Price'] = h_df['Total_Value_USD'] / h_df['Total_Units']
+                    
+                    first_row = h_df.iloc[0]
+                    last_row = h_df.iloc[-1]
+                    
+                    time_diff = (last_row['Timestamp'] - first_row['Timestamp']).total_seconds()
+                    days_diff = time_diff / (24 * 3600)
+                    
+                    price_start = first_row['Price']
+                    price_last = last_row['Price']
+                    
+                    if days_diff > 0.01 and price_start > 0:
+                        # Return based on Share Price growth (Time-Weighted Return)
+                        total_return = (price_last / price_start) - 1
+                        apr = (total_return * 365 / days_diff) * 100
+                        
+                        hist_col1, hist_col2 = st.columns([3, 1])
+                        with hist_col1:
+                            st.subheader("📊 Portfolio Value History")
+                        with hist_col2:
+                            st.metric("Projected APR", f"{apr:+.1f}%", help="Annualized return based on history trajectory")
+                    else:
+                        st.subheader("📊 Portfolio Value History")
+                else:
+                    st.subheader("📊 Portfolio Value History")
+
+                # Create a premium area chart
+                fig_hist = px.area(
+                    h_df, 
+                    x='Timestamp', 
+                    y='Total_Value_USD',
+                    template="plotly_dark",
+                    labels={'Total_Value_USD': 'Value ($)', 'Timestamp': 'Time'}
+                )
+                
+                # Enhance aesthetics
+                fig_hist.update_traces(
+                    line_color='#00e676', # Vibrant emerald
+                    fillcolor='rgba(0, 230, 118, 0.15)',
+                    line_width=3,
+                    hovertemplate="<b>Value:</b> $%{y:,.2f}<br><b>Time:</b> %{x|%Y-%m-%d %H:%M}"
+                )
+                
+                fig_hist.update_layout(
+                    height=450,
+                    margin=dict(l=40, r=40, t=20, b=40),
+                    hovermode="x unified",
+                    xaxis=dict(
+                        showgrid=False,
+                        rangeselector=dict(
+                            buttons=list([
+                                dict(count=1, label="1d", step="day", stepmode="backward"),
+                                dict(count=7, label="1w", step="day", stepmode="backward"),
+                                dict(count=1, label="1m", step="month", stepmode="backward"),
+                                dict(step="all")
+                            ]),
+                            bgcolor="rgba(30, 41, 59, 0.8)",
+                            font=dict(color="#f8fafc")
+                        )
+                    ),
+                    yaxis=dict(
+                        showgrid=True, 
+                        gridcolor="rgba(255,255,255,0.05)",
+                        tickprefix="$",
+                        tickformat=",."
+                    )
+                )
+                
+                st.plotly_chart(fig_hist, use_container_width=True)
+            else:
+                st.subheader("📊 Portfolio Value History")
+                st.info("Portfolio history is currently empty. Logging will begin automatically.")
+        except Exception as e_hist:
+            st.error(f"Error loading history: {e_hist}")
+    else:
+        st.info("Portfolio history not yet available. First run of scheduled task pending.")
+
     st.divider()
 
     # 5. Single-Sided Audit
@@ -458,6 +674,7 @@ def main():
         st.divider()
         st.markdown("**Raw Data API Feed**")
         st.dataframe(df, use_container_width=True)
+
 
 if __name__ == "__main__":
     main()

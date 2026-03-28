@@ -97,3 +97,8 @@ Create frontend for the dashboard, so that it can be accessed through a browser.
 todo 15.1
 
 add history tracking fo the dashboard, should preferably only show relative movement to prevent uneccessary movement during addition of funds.
+
+todo 16.1
+
+Initial automation, enable automatic trading for already owned or approved market pairs.
+This will as a first edition be done using github actions.

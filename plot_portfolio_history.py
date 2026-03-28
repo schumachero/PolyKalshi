@@ -2,36 +2,36 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import os
 
-# Konfiguration
+# Configuration
 HISTORY_CSV = os.path.join("Data", "portfolio_history.csv")
 
 def plot_history():
     """
-    Läser historikdata från CSV och skapar en graf över portföljvärdet över tid.
+    Reads history data from CSV and creates a chart of portfolio value over time.
     """
     if not os.path.exists(HISTORY_CSV):
-        print(f"Fel: Hittade inte historikfilen {HISTORY_CSV}. Kör log_portfolio_history.py först.")
+        print(f"Error: Could not find history file {HISTORY_CSV}. Run log_portfolio_history.py first.")
         return
 
     try:
-        # 1. Läs in data
+        # 1. Load data
         df = pd.read_csv(HISTORY_CSV)
         
         if df.empty:
-            print("Historikfilen är tom.")
+            print("History file is empty.")
             return
 
-        # 2. Förbered data
-        # Konvertera tidsstämpel-strängen till riktiga datetime-objekt
+        # 2. Prepare data
+        # Convert timestamp string to proper datetime objects
         df['Timestamp'] = pd.to_datetime(df['Timestamp'])
-        # Sortera efter tid ifall rader lagts till i fel ordning
+        # Sort by time in case rows were added out of order
         df = df.sort_values('Timestamp')
 
-        # 3. Skapa grafen
-        plt.style.use('ggplot') # Använd en snygg stil
+        # 3. Create the chart
+        plt.style.use('ggplot') # Use a nice style
         fig, ax = plt.subplots(figsize=(12, 7))
 
-        # Plotta linjen
+        # Plot the line
         ax.plot(df['Timestamp'], df['Total_Value_USD'], 
                 marker='o', 
                 linestyle='-', 
@@ -40,27 +40,27 @@ def plot_history():
                 markersize=8,
                 label='Total Portfolio Value')
 
-        # Fyll ytan under linjen för en "area chart" effekt
+        # Fill the area under the line for an "area chart" effect
         ax.fill_between(df['Timestamp'], df['Total_Value_USD'], color='#3498db', alpha=0.1)
 
-        # 4. Formatering och design
-        ax.set_title('Portföljens värdeutveckling över tid', fontsize=18, fontweight='bold', pad=20)
-        ax.set_xlabel('Tidpunkt', fontsize=13, labelpad=10)
-        ax.set_ylabel('Värde (USD)', fontsize=13, labelpad=10)
+        # 4. Formatting and design
+        ax.set_title('Portfolio Value Over Time', fontsize=18, fontweight='bold', pad=20)
+        ax.set_xlabel('Time', fontsize=13, labelpad=10)
+        ax.set_ylabel('Value (USD)', fontsize=13, labelpad=10)
         
-        # Lägg till dollar-tecken på Y-axeln
+        # Add dollar signs to the Y-axis
         from matplotlib.ticker import StrMethodFormatter
         ax.yaxis.set_major_formatter(StrMethodFormatter('${x:,.2f}'))
 
-        # Rotera datumetiketter för bättre läsbarhet
+        # Rotate date labels for better readability
         plt.xticks(rotation=45)
         
         ax.grid(True, linestyle='--', alpha=0.6)
         
-        # Visa det senaste värdet som en textnotis i grafen
+        # Show the latest value as a text note in the chart
         last_val = df.iloc[-1]['Total_Value_USD']
         last_date = df.iloc[-1]['Timestamp']
-        ax.annotate(f'Aktuellt: ${last_val:.2f}', 
+        ax.annotate(f'Current: ${last_val:.2f}', 
                     xy=(last_date, last_val), 
                     xytext=(10, 10), 
                     textcoords='offset points',
@@ -71,12 +71,12 @@ def plot_history():
 
         plt.tight_layout()
         
-        print(f"Genererar graf baserat på {len(df)} mätpunkter...")
-        print("Öppnar ett fönster för att visa grafen...")
+        print(f"Generating chart based on {len(df)} data points...")
+        print("Opening a window to show the chart...")
         plt.show()
 
     except Exception as e:
-        print(f"Ett fel uppstod vid skapande av graf: {e}")
+        print(f"An error occurred while creating the chart: {e}")
 
 if __name__ == "__main__":
     plot_history()
