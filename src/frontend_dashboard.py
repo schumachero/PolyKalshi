@@ -352,10 +352,16 @@ def main():
             
             # Show Recent Injections
             if os.path.exists(CAPITAL_CHANGES_CSV):
-                st.divider()
-                st.markdown("**Recent Injections/Withdrawals**")
-                cap_history = pd.read_csv(CAPITAL_CHANGES_CSV)
-                st.dataframe(cap_history.sort_values("Timestamp", ascending=False).head(5), use_container_width=True, hide_index=True)
+                try:
+                    cap_history = pd.read_csv(CAPITAL_CHANGES_CSV)
+                    if not cap_history.empty:
+                        st.divider()
+                        st.markdown("**Recent Injections/Withdrawals**")
+                        st.dataframe(cap_history.sort_values("Timestamp", ascending=False).head(5), use_container_width=True, hide_index=True)
+                    else:
+                        st.caption("No capital changes recorded since reset.")
+                except:
+                    pass
 
     if df.empty:
         st.error("No data found. Ensure your keys are in Streamlit Secrets.")
