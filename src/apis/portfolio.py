@@ -494,7 +494,7 @@ def print_portfolio_summary(wallet_address: str = None):
             print(f"  {'-'*45} {'-'*5} {'-'*8}  {'-'*10}  {'-'*8}  {'-'*12}")
             for p in p_positions:
                 title_short = (p["title"] or p["market_id"])[:44]
-                end = p["end_date"][:10] if p["end_date"] else "N/A"
+                end = p.get("close_time", "")[:10] if p.get("close_time") else "N/A"
                 pnl = f"+{p['pnl']:.2f}" if p["pnl"] >= 0 else f"{p['pnl']:.2f}"
                 cur_val = p["current_value"]
                 p_total += cur_val
@@ -517,7 +517,7 @@ def print_portfolio_summary(wallet_address: str = None):
                     "market_ticker": p["market_id"],
                     "market_title": p["title"],
                     "rules_text": p["rules"],
-                    "close_time": p["end_date"],
+                    "close_time": p.get("close_time", ""),
                     "status": "active" # For generate_semantic_matches filtering
                 })
             

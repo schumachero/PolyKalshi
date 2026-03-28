@@ -1,0 +1,36 @@
+name: Run Trade Action
+
+on:
+  schedule:
+    - cron: '0 * * * *' # every hour
+  workflow_dispatch: # Manual trigger
+
+jobs:
+  trade:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip' # Cache så att programmet inte behöver installera om alla bibliotek varje gång det körs.
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Create Data directory
+        run: mkdir -p Data
+
+      - name: Run trader
+        env:
+          KALSHI_ACCESS_KEY: ${{ secrets.KALSHI_ACCESS_KEY }}
+          KALSHI_RSA_PRIVATE_KEY: ${{ secrets.KALSHI_RSA_PRIVATE_KEY }}
+          POLYMARKET_WALLET_ADDRESS: ${{ secrets.POLYMARKET_WALLET_ADDRESS }}
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python ########## <---The file we intend to run

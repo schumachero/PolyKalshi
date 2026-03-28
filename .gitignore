@@ -3,4 +3,6 @@ __pycache__/
 *.py[cod]
 .ipynb_checkpoints/
 Data/*.csv
+!Data/portfolio_history.csv
+!Data/capital_changes.csv
 .DS_Store

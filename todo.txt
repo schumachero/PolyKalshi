@@ -87,7 +87,18 @@ so i think it should be viable // ArvidA
 todo 13.1
 
 include any transaction fees in arbitrage calculations. 
+After checking poly and kalshi fee structures a good enough approximate should be a 1% fee on both platforms.
+So simply subtracting 1 cent from potetial earning per share in the arbitrage calulator should cover it.
 
 todo 14.1 SOLVED
 
 Create frontend for the dashboard, so that it can be accessed through a browser.
+
+todo 15.1
+
+add history tracking fo the dashboard, should preferably only show relative movement to prevent uneccessary movement during addition of funds.
+
+todo 16.1
+
+Initial automation, enable automatic trading for already owned or approved market pairs.
+This will as a first edition be done using github actions.
