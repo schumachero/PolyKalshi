@@ -284,7 +284,7 @@ def main():
             h_df_start = pd.read_csv(HISTORY_CSV)
             if not h_df_start.empty:
                 start_ts = pd.to_datetime(h_df_start.iloc[0]['Timestamp']).strftime("%Y-%m-%d")
-                st.markdown(f'<div class="start-date-badge">📅 Start Date: {start_ts}</div>', unsafe_allow_html=True)
+                st.markdown(f'<div class="start-date-badge">Start Date: {start_ts}</div>', unsafe_allow_html=True)
         except:
             pass
 
