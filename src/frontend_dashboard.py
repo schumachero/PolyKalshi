@@ -301,9 +301,16 @@ def main():
         st.caption(f"Data Source: {source}")
         
         st.divider()
-        with st.expander("💰 Capital Management", expanded=False):
+        with st.expander("Capital Management", expanded=False):
             st.markdown("Record internal funding changes to keep APR accurate.")
-            cap_change = st.number_input("Amount (USD)", value=0.0, step=100.0, help="Positive for deposits, negative for withdrawals")
+            # Simplified input to avoid potential JS module loading issues in some environments
+            cap_change_raw = st.text_input("Amount (USD)", value="0.0")
+            cap_change = 0.0
+            try:
+                cap_change = float(cap_change_raw)
+            except ValueError:
+                st.error("Please enter a valid numeric amount.")
+            
             if st.button("Confirm Capital Change"):
                 if os.path.exists(HISTORY_CSV):
                     try:
