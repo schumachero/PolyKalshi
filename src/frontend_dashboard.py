@@ -122,7 +122,7 @@ st.markdown("""
     .status-box { padding: 8px; border-radius: 8px; margin-bottom: 8px; font-size: 0.8em; text-align: center; }
     .status-ok { background: #065f46; color: #34d399; border: 1px solid #059669; }
     .status-missing { background: #7f1d1d; color: #f87171; border: 1px solid #b91c1c; }
-    .start-date-badge { position: absolute; top: 10px; right: 20px; color: #94a3b8; font-size: 0.85rem; background: rgba(30, 41, 59, 0.5); padding: 5px 12px; border-radius: 20px; border: 1px solid #334155; }
+    .start-date-badge { color: #94a3b8; font-size: 0.9rem; background: rgba(30, 41, 59, 1.0); padding: 8px 15px; border-radius: 12px; border: 1px solid #334155; text-align: right; margin-top: 15px; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -276,17 +276,19 @@ def main():
     if not check_password():
         st.stop()
     
-    st.markdown("# PolyKalshi Terminal")
-
-    # Start Date Badge logic
-    if os.path.exists(HISTORY_CSV):
-        try:
-            h_df_start = pd.read_csv(HISTORY_CSV)
-            if not h_df_start.empty:
-                start_ts = pd.to_datetime(h_df_start.iloc[0]['Timestamp']).strftime("%Y-%m-%d")
-                st.markdown(f'<div class="start-date-badge">Start Date: {start_ts}</div>', unsafe_allow_html=True)
-        except:
-            pass
+    col_t1, col_t2 = st.columns([3, 1])
+    with col_t1:
+        st.markdown("# PolyKalshi Terminal")
+    
+    with col_t2:
+        if os.path.exists(HISTORY_CSV):
+            try:
+                h_df_start = pd.read_csv(HISTORY_CSV)
+                if not h_df_start.empty:
+                    start_ts = pd.to_datetime(h_df_start.iloc[0]['Timestamp']).strftime("%Y-%m-%d")
+                    st.markdown(f'<div class="start-date-badge">Tracking Since: {start_ts}</div>', unsafe_allow_html=True)
+            except:
+                pass
 
     # 1. Load Data (Move to top to avoid UnboundLocalError)
     df, source = get_dashboard_data()
