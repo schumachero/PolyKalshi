@@ -1,0 +1,6 @@
+pandas
+numpy
+requests
+python-dotenv
+cryptography
+tqdm

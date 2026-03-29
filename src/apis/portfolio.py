@@ -527,7 +527,7 @@ def print_portfolio_summary(wallet_address: str = None):
             print("\n  No open positions found (or wallet has no activity).")
 
     # --- Semantic Matching ---
-    if k_pos_data and p_pos_data:
+    if k_pos_data and p_pos_data and os.getenv("SKIP_SEMANTIC_MATCHING") != "true":
         print("\n" + "-" * 40)
         print("  Running Semantic Matching on Portfolio...")
         try:

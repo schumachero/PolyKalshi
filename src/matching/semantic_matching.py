@@ -1,6 +1,5 @@
 import pandas as pd
-import torch
-from sentence_transformers import SentenceTransformer, util
+# torch and sentence_transformers are moved inside functions to make them optional
 
 # =========================
 # Configuration
@@ -38,9 +37,15 @@ OUTPUT_CSV = "Data/semantic_matches.csv"
 _model = None
 
 def get_model():
+    """Returns the SentenceTransformer model. Imports are done here to make them optional."""
     global _model
     if _model is None:
-        _model = SentenceTransformer(MODEL_NAME)
+        try:
+            from sentence_transformers import SentenceTransformer
+            _model = SentenceTransformer(MODEL_NAME)
+        except ImportError:
+            print(f"[semantic_matching] Error: 'sentence-transformers' not installed. Cannot use {MODEL_NAME}.")
+            return None
     return _model
 
 def generate_semantic_matches(kalshi_df, polymarket_df, title_col_kalshi=TITLE_COL_KALSHI, title_col_poly=TITLE_COL_POLY, threshold=SIMILARITY_THRESHOLD, top_k=TOP_K, max_date_diff=MAX_DATE_DIFF_DAYS):
@@ -48,7 +53,16 @@ def generate_semantic_matches(kalshi_df, polymarket_df, title_col_kalshi=TITLE_C
     Finds matches strictly based on cosine similarity of the given title columns.
     Returns a DataFrame ranked by semantic similarity.
     """
+    try:
+        import torch
+        from sentence_transformers import util
+    except ImportError:
+        print("[semantic_matching] Error: 'torch' or 'sentence-transformers' not installed.")
+        return pd.DataFrame()
+
     model = get_model()
+    if model is None:
+        return pd.DataFrame()
     
     # Ensure no NaN
     kalshi_df = kalshi_df.copy()
@@ -131,7 +145,15 @@ def rescore_existing_matches(matches_df, title_col_kalshi='kalshi_market', title
     if matches_df.empty:
         return matches_df
         
+    try:
+        import torch
+    except ImportError:
+        print("[semantic_matching] Error: 'torch' not installed.")
+        return matches_df
+
     model = get_model()
+    if model is None:
+        return matches_df
     
     # Ensure titles are strings
     k_titles = matches_df[title_col_kalshi].fillna("").astype(str).tolist()
