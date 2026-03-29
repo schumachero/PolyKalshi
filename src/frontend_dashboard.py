@@ -447,11 +447,15 @@ def main():
                     k_b_list = obs.get('kalshi', {}).get(k_side_raw.lower(), {}).get('bids', [])
                     p_b_list = obs.get('polymarket', {}).get(p_side_raw.lower(), {}).get('bids', [])
                     
-                    k_bid, k_bid_vol = (k_b_list[0]['price'], k_b_list[0]['volume']) if k_b_list else (0, 0)
+                    k_bid_raw, k_bid_vol = (k_b_list[0]['price'], k_b_list[0]['volume']) if k_b_list else (0, 0)
                     p_bid, p_bid_vol = (p_b_list[0]['price'], p_b_list[0]['volume']) if p_b_list else (0, 0)
                     
-                    combined_bid = k_bid + p_bid
-                    k_bid_liq_ok = (k_bid_vol >= VOLUME_PERCENTILE_THRESHOLD * k['Quantity']) or (k_bid_vol * k_bid >= VOLUME_FIXED_THRESHOLD)
+                    # Apply Kalshi Fee to Bids (We receive less when selling)
+                    k_bid_fee = 0.07 * k_bid_raw * (1.0 - k_bid_raw) if k_bid_raw > 0 else 0
+                    k_bid_net = k_bid_raw - k_bid_fee
+                    
+                    combined_bid = k_bid_net + p_bid
+                    k_bid_liq_ok = (k_bid_vol >= VOLUME_PERCENTILE_THRESHOLD * k['Quantity']) or (k_bid_vol * k_bid_raw >= VOLUME_FIXED_THRESHOLD)
                     p_bid_liq_ok = (p_bid_vol >= VOLUME_PERCENTILE_THRESHOLD * p['Quantity']) or (p_bid_vol * p_bid >= VOLUME_FIXED_THRESHOLD)
                     
                     if combined_bid >= EXIT_TARGET and k_bid_liq_ok and p_bid_liq_ok: sell_status = "✅ Ready to Exit"
@@ -462,12 +466,12 @@ def main():
 
                     strategy_rows.append({
                         "Strategy": k['Title'],
-                        "Combo Bid": f"${combined_bid:.3f}",
+                        "Combo Bid (Net)": f"${combined_bid:.3f}",
                         "Sellable Status": sell_status,
                         "Hedge Type": is_hedge,
-                        "Kalshi Side": f"{k_side_raw} (${k_bid:.3f})",
-                        "Polymarket Side": f"{p_side_raw} (${p_bid:.3f})",
-                        "Gap": f"${max(0.99-combined_bid, 0):.3f}",
+                        "Kalshi Side (Net Bid)": f"{k_side_raw} (${k_bid_net:.3f})",
+                        "Polymarket Side (Bid)": f"{p_side_raw} (${p_bid:.3f})",
+                        "Gap (Net)": f"${max(0.99-combined_bid, 0):.3f}",
                         "Total Value": f"${(k['Value_USD'] + p['Value_USD']):,.2f}",
                         "Total P&L": f"${(k['Profit_USD'] + p['Profit_USD']):,.2f}"
                     })
@@ -476,12 +480,16 @@ def main():
                     k_a_list = obs.get('kalshi', {}).get(k_side_raw.lower(), {}).get('asks', [])
                     p_a_list = obs.get('polymarket', {}).get(p_side_raw.lower(), {}).get('asks', [])
                     
-                    k_ask, k_ask_vol = (k_a_list[0]['price'], k_a_list[0]['volume']) if k_a_list else (1.0, 0)
+                    k_ask_raw, k_ask_vol = (k_a_list[0]['price'], k_a_list[0]['volume']) if k_a_list else (1.0, 0)
                     p_ask, p_ask_vol = (p_a_list[0]['price'], p_a_list[0]['volume']) if p_a_list else (1.0, 0)
                     
-                    combined_ask = k_ask + p_ask
+                    # Apply Kalshi Fee to Asks (We pay more when buying)
+                    k_ask_fee = 0.07 * k_ask_raw * (1.0 - k_ask_raw) if k_ask_raw < 1.0 else 0
+                    k_ask_net = k_ask_raw + k_ask_fee
+                    
+                    combined_ask = k_ask_net + p_ask
                     # Investment liquidity
-                    k_ask_liq_ok = (k_ask_vol * k_ask >= VOLUME_FIXED_THRESHOLD)
+                    k_ask_liq_ok = (k_ask_vol * k_ask_raw >= VOLUME_FIXED_THRESHOLD)
                     p_ask_liq_ok = (p_ask_vol * p_ask >= VOLUME_FIXED_THRESHOLD)
                     
                     if combined_ask <= INVEST_TARGET and k_ask_liq_ok and p_ask_liq_ok: invest_status = "✅ Available Investment"
@@ -490,11 +498,11 @@ def main():
                     
                     invest_rows.append({
                         "Strategy": k['Title'],
-                        "Combo Ask": f"${combined_ask:.3f}",
+                        "Combo Ask (Net)": f"${combined_ask:.3f}",
                         "Investment Status": invest_status,
-                        "Kalshi Side (Ask)": f"{k_side_raw} (${k_ask:.3f})",
+                        "Kalshi Side (Net Ask)": f"{k_side_raw} (${k_ask_net:.3f})",
                         "Polymarket Side (Ask)": f"{p_side_raw} (${p_ask:.3f})",
-                        "Arbitrage Opportunity": f"${max(1.0-combined_ask, 0):.3f}",
+                        "Arbitrage Opportunity (Net)": f"${max(1.0-combined_ask, 0):.3f}",
                         "Current Holding Value": f"${(k['Value_USD'] + p['Value_USD']):,.2f}"
                     })
                 
