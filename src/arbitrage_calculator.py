@@ -84,7 +84,57 @@ def get_days_to_resolution(row):
     return max(delta.days, 1)
 
 
-def find_depth_arbitrage(k_asks, p_asks, days_to_res, min_profit, min_daily_roi):
+def get_polymarket_fee_category(market_title, series_title):
+    text = f"{market_title} {series_title}".lower()
+    
+    if any(k in text for k in ["btc", "eth", "sol", "bitcoin", "ethereum", "crypto", "layerzero"]):
+        return "Crypto"
+    elif any(k in text for k in ["nfl", "nba", "champions league", "premier league", "tennis", "sports", "ufc", "boxing", "mlb", "nhl"]):
+        return "Sports"
+    elif any(k in text for k in ["fed", "rate", "inflation", "cpi", "gdp", "economy", "job", "unemployment"]):
+        return "Economics"
+    elif any(k in text for k in ["trump", "biden", "election", "democrat", "republican", "senate", "house", "presidential", "primary", "nominee", "mayor", "congress"]):
+        return "Politics"
+    elif any(k in text for k in ["box office", "movie", "oscar", "grammy", "culture", "pop", "award", "spotify", "music", "youtube"]):
+        return "Culture"
+    elif any(k in text for k in ["weather", "temperature", "hurricane", "storm", "rain"]):
+        return "Weather"
+    elif any(k in text for k in ["ai", "gpt", "openai", "tech", "spacex", "starship", "apple", "google", "meta"]):
+        return "Tech"
+    elif any(k in text for k in ["israel", "gaza", "russia", "ukraine", "war", "peace", "nato", "geopolitics"]):
+        return "Geopolitics"
+    elif any(k in text for k in ["finance", "stock", "sp 500", "s&p", "dow", "nasdaq", "price target"]):
+        return "Finance"
+    elif any(k in text for k in ["say", "tweet", "mention"]):
+        return "Mentions"
+        
+    return "Other / General"
+
+def calculate_polymarket_fee(price_dollar, category):
+    fees = {
+        "Crypto": (0.072, 1),
+        "Sports": (0.03, 1),
+        "Finance": (0.04, 1),
+        "Politics": (0.04, 1),
+        "Economics": (0.03, 0.5),
+        "Culture": (0.05, 1),
+        "Weather": (0.025, 0.5),
+        "Other / General": (0.2, 2),
+        "Mentions": (0.25, 2),
+        "Tech": (0.04, 1),
+        "Geopolitics": (0.0, 1) # Geopolitics is technically 0
+    }
+    rate, exponent = fees.get(category, (0.04, 1))
+    
+    if category == "Geopolitics" or price_dollar <= 0 or price_dollar >= 1.0:
+        return 0.0
+        
+    raw_fee = rate * ((price_dollar * (1.0 - price_dollar)) ** exponent)
+    return raw_fee
+
+
+
+def find_depth_arbitrage(k_asks, p_asks, days_to_res, min_profit, min_daily_roi, pm_category="Other / General"):
     """
     Consume both ask ladders while the next marginal chunk still satisfies:
         marginal_profit_pct >= max(min_profit, min_daily_roi * days_to_res)
@@ -115,7 +165,17 @@ def find_depth_arbitrage(k_asks, p_asks, days_to_res, min_profit, min_daily_roi)
         k_price, _ = k_asks[i]
         p_price, _ = p_asks[j]
 
-        marginal_total_cost = k_price + p_price
+        # Apply Kalshi fee to the ask price (We pay more when buying)
+        k_price_dollar = k_price / 100.0
+        k_fee_dollar = 0.07 * k_price_dollar * (1.0 - k_price_dollar) if k_price_dollar < 1.0 else 0
+        k_price_net = k_price + (k_fee_dollar * 100.0)
+
+        # Apply Polymarket category fee to the ask price
+        p_price_dollar = p_price / 100.0
+        p_fee_dollar = calculate_polymarket_fee(p_price_dollar, pm_category)
+        p_price_net = p_price + (p_fee_dollar * 100.0)
+
+        marginal_total_cost = k_price_net + p_price_net
         marginal_profit_pct = 100.0 - marginal_total_cost
 
         if marginal_profit_pct < required_profit_pct:
@@ -126,8 +186,8 @@ def find_depth_arbitrage(k_asks, p_asks, days_to_res, min_profit, min_daily_roi)
             break
 
         total_contracts += qty
-        total_k_cost += qty * k_price
-        total_p_cost += qty * p_price
+        total_k_cost += qty * k_price_net
+        total_p_cost += qty * p_price_net
         levels_consumed += 1
 
         k_remaining -= qty
@@ -166,13 +226,21 @@ def find_depth_arbitrage(k_asks, p_asks, days_to_res, min_profit, min_daily_roi)
     }
 
 
-def calculate_arbitrage():
-    if not os.path.exists(INPUT_CSV):
-        print(f"{INPUT_CSV} not found.")
-        return
+def calculate_arbitrage(input_data=None, output_csv=OUTPUT_CSV, return_df=False):
+    if input_data is None:
+        input_data = INPUT_CSV
 
-    df = pd.read_csv(INPUT_CSV)
-    print(f"Loaded {len(df)} matches from {INPUT_CSV}")
+    if isinstance(input_data, str):
+        if not os.path.exists(input_data):
+            print(f"{input_data} not found.")
+            return pd.DataFrame() if return_df else None
+        df = pd.read_csv(input_data)
+        print(f"Loaded {len(df)} matches from {input_data}")
+    elif isinstance(input_data, pd.DataFrame):
+        df = input_data.copy()
+        print(f"Processing {len(df)} matches from provided DataFrame.")
+    else:
+        raise ValueError("input_data must be a file path or a pandas DataFrame")
 
     # Optional datetime parsing for time-aware thresholding
     if "kalshi_close_time" in df.columns:
@@ -204,6 +272,11 @@ def calculate_arbitrage():
         if days_to_res > MAX_RESOLUTION_DAYS:
             continue
 
+        pm_category = get_polymarket_fee_category(
+            str(row.get("polymarket_market", "")),
+            str(row.get("polymarket_series", ""))
+        )
+
         strategies = [
             {
                 "direction": "K_YES_P_NO",
@@ -224,6 +297,7 @@ def calculate_arbitrage():
                 days_to_res=days_to_res,
                 min_profit=MIN_PROFIT,
                 min_daily_roi=MIN_DAILY_ROI,
+                pm_category=pm_category,
             )
 
             if depth_result is None:
@@ -260,8 +334,10 @@ def calculate_arbitrage():
             "contracts", "avg_k_price", "avg_p_price", "required_profit_pct",
             "days_to_resolution", "levels_consumed"
         ]
-        pd.DataFrame(columns=base_cols + extra_cols).to_csv(OUTPUT_CSV, index=False)
-        return
+        empty_df = pd.DataFrame(columns=base_cols + extra_cols)
+        if output_csv:
+            empty_df.to_csv(output_csv, index=False)
+        return empty_df if return_df else None
 
     out_df = pd.DataFrame(results)
     out_df = out_df.sort_values(
@@ -269,8 +345,11 @@ def calculate_arbitrage():
         ascending=[False, False, False]
     )
 
-    out_df.to_csv(OUTPUT_CSV, index=False)
-    print(f"Found {len(out_df)} opportunities. Results saved to {OUTPUT_CSV}")
+    if output_csv:
+        out_df.to_csv(output_csv, index=False)
+        print(f"Found {len(out_df)} opportunities. Results saved to {output_csv}")
+    else:
+        print(f"Found {len(out_df)} opportunities.")
 
     print("\nTop 5 Arbitrage Opportunities:")
     cols_to_show = [
@@ -285,6 +364,9 @@ def calculate_arbitrage():
     ]
     available_cols = [c for c in cols_to_show if c in out_df.columns]
     print(out_df[available_cols].head(5).to_string(index=False))
+
+    if return_df:
+        return out_df
 
 
 if __name__ == "__main__":
