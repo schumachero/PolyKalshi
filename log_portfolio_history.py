@@ -74,6 +74,17 @@ def log_to_history(total_value):
         # Ensure the Data folder exists
         os.makedirs(os.path.dirname(HISTORY_CSV), exist_ok=True)
         
+        # Clean up any trailing blank lines before appending to prevent gaps
+        if file_exists:
+            try:
+                with open(HISTORY_CSV, 'r+', encoding='utf-8') as f:
+                    content = f.read().rstrip()
+                    f.seek(0)
+                    f.write(content + '\n')
+                    f.truncate()
+            except Exception as e:
+                print(f"Warning: Could not clean history file: {e}")
+
         with open(HISTORY_CSV, 'a', newline='', encoding='utf-8') as f:
             writer = csv.writer(f)
             # Write header if it's a new file
