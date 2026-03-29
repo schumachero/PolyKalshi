@@ -122,7 +122,7 @@ st.markdown("""
     .status-box { padding: 8px; border-radius: 8px; margin-bottom: 8px; font-size: 0.8em; text-align: center; }
     .status-ok { background: #065f46; color: #34d399; border: 1px solid #059669; }
     .status-missing { background: #7f1d1d; color: #f87171; border: 1px solid #b91c1c; }
-    .start-date-badge { color: #94a3b8; font-size: 0.9rem; background: rgba(30, 41, 59, 1.0); padding: 8px 15px; border-radius: 12px; border: 1px solid #334155; text-align: right; margin-top: 15px; }
+    .start-date-badge { color: #94a3b8; font-size: 0.9rem; background: #1e293b; padding: 8px 15px; border-radius: 12px; border: 1px solid #334155; display: inline-block; float: right; margin-top: 15px; }
 </style>
 """, unsafe_allow_html=True)
 
