@@ -95,7 +95,7 @@ def push_to_github(file_path, content, message):
 
 EXIT_TARGET = 0.99
 INVEST_TARGET = 0.95
-TIME_OFFSET_HOURS = 1 
+TIME_OFFSET_HOURS = 2 
 VOLUME_PERCENTILE_THRESHOLD = 0.20 # 20% of position
 VOLUME_FIXED_THRESHOLD = 10 # $10 worth
 
