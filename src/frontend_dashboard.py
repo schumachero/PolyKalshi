@@ -180,11 +180,11 @@ def transform_to_dataframe(k_pos, p_pos):
             "Title": p["title"],
             "Side": p["side"],
             "Quantity": p["quantity"],
-            "Price": p.get("current_price", 0),
-            "Value_USD": p.get("market_exposure_cents", 0) / 100,
-            "Profit_USD": p.get("realized_pnl_cents", 0) / 100,
+            "Price": p.get("current_price", 0.0),
+            "Value_USD": p.get("market_exposure_cents", 0.0) / 100,
+            "Profit_USD": p.get("realized_pnl_cents", 0.0) / 100,
             "Matched_Ticker": p.get("matched_ticker", ""),
-            "Match_Score": p.get("match_score", 0),
+            "Match_Score": p.get("match_score", 0.0),
             "close_time": p.get("close_time", ""),
             "rules": p.get("rules", "")
         })
@@ -196,11 +196,11 @@ def transform_to_dataframe(k_pos, p_pos):
             "Title": p["title"],
             "Side": p["side"],
             "Quantity": p["size"],
-            "Price": p.get("current_price", 0),
-            "Value_USD": p.get("current_value", 0),
-            "Profit_USD": p.get("pnl", 0),
+            "Price": p.get("current_price", 0.0),
+            "Value_USD": p.get("current_value", 0.0),
+            "Profit_USD": p.get("pnl", 0.0),
             "Matched_Ticker": p.get("matched_ticker", ""),
-            "Match_Score": p.get("match_score", 0),
+            "Match_Score": p.get("match_score", 0.0),
             "close_time": p.get("close_time", ""),
             "rules": p.get("rules", "")
         })
