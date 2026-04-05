@@ -24,7 +24,7 @@ NOTIFICATION_THRESHOLD = 5.0  # Notify if profit >= 5%
 MAX_RESOLUTION_DAYS = 365
 
 
-def parse_orderbook_side(raw_value):
+def parse_orderbook_side(raw_value, is_bid=False):
     """
     Parse a stored orderbook side from CSV.
 
@@ -68,7 +68,7 @@ def parse_orderbook_side(raw_value):
         except (KeyError, TypeError, ValueError):
             continue
 
-    parsed.sort(key=lambda x: x[0])  # cheapest ask first
+    parsed.sort(key=lambda x: x[0], reverse=is_bid)  # cheapest ask first, or best bid first
     return parsed
 
 
@@ -224,6 +224,78 @@ def find_depth_arbitrage(k_asks, p_asks, days_to_res, min_profit, min_daily_roi,
         "required_profit_pct": round(required_profit_pct, 4),
         "levels_consumed": levels_consumed,
     }
+
+
+def calculate_exit_opportunities(k_bids, p_bids, pm_category="Other / General", min_revenue=97.0):
+    """
+    Consume both bid ladders to determine exactly how many grouped contracts 
+    can be sold before the combined net revenue drops below min_revenue.
+    
+    Returns a list of tranches:
+    [
+        {
+            "qty": 10.0,
+            "combined_net_revenue": 101.5,
+            "kalshi_price": ...
+        }, ...
+    ]
+    """
+    if not k_bids or not p_bids:
+        return []
+
+    i = 0
+    j = 0
+    k_remaining = k_bids[0][1]
+    p_remaining = p_bids[0][1]
+
+    opportunities = []
+
+    while i < len(k_bids) and j < len(p_bids):
+        k_price, _ = k_bids[i]
+        p_price, _ = p_bids[j]
+
+        # Calculate Kalshi Net Bid (subtract fee because we receive less)
+        k_price_dollar = k_price / 100.0
+        k_fee_dollar = 0.07 * k_price_dollar * (1.0 - k_price_dollar) if k_price_dollar > 0.0 else 0.0
+        k_price_net = k_price - (k_fee_dollar * 100.0)
+
+        # Calculate Polymarket Net Bid
+        p_price_dollar = p_price / 100.0
+        p_fee_dollar = calculate_polymarket_fee(p_price_dollar, pm_category)
+        p_price_net = p_price - (p_fee_dollar * 100.0)
+
+        marginal_combined_net = k_price_net + p_price_net
+
+        if marginal_combined_net < min_revenue:
+            break
+
+        qty = min(k_remaining, p_remaining)
+        if qty <= 0:
+            break
+
+        opportunities.append({
+            "qty": round(qty, 4),
+            "combined_net_revenue": round(marginal_combined_net, 4),
+            "kalshi_price": round(k_price, 4),
+            "kalshi_net": round(k_price_net, 4),
+            "polymarket_price": round(p_price, 4),
+            "polymarket_net": round(p_price_net, 4)
+        })
+
+        k_remaining -= qty
+        p_remaining -= qty
+
+        if k_remaining <= 1e-12:
+            i += 1
+            if i < len(k_bids):
+                k_remaining = k_bids[i][1]
+
+        if p_remaining <= 1e-12:
+            j += 1
+            if j < len(p_bids):
+                p_remaining = p_bids[j][1]
+
+    return opportunities
 
 
 def calculate_arbitrage(input_data=None, output_csv=OUTPUT_CSV, return_df=False):
