@@ -291,6 +291,9 @@ def main():
     col_t1, col_t2 = st.columns([3, 1])
     with col_t1:
         st.markdown("# PolyKalshi Terminal")
+        if st.button("🔄 Refresh Data", type="primary", help="Fetch fresh market data and recent trades"):
+            st.cache_data.clear()
+            st.rerun()
     
     with col_t2:
         if os.path.exists(HISTORY_CSV):
