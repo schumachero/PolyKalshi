@@ -341,6 +341,124 @@ def get_polymarket_balance(addr: str) -> float:
 
 
 # =========================
+# Order History / Trades
+# =========================
+
+def get_kalshi_recent_trades(days: int = 14) -> list[dict]:
+    """Fetch order history (fills) for the past N days."""
+    positions = []
+    
+    min_ts = int((datetime.datetime.now() - datetime.timedelta(days=days)).timestamp())
+    
+    cursor = None
+    while True:
+        params = {"limit": 200, "min_ts": min_ts}
+        if cursor:
+            params["cursor"] = cursor
+            
+        data = _kalshi_get("/portfolio/fills", params=params)
+        if not data:
+            break
+            
+        fills = data.get("fills", [])
+        if not fills:
+            break
+            
+        for f in fills:
+            ticker = f.get("ticker", "")
+            side = f.get("side", "")
+            action = f.get("action", "") # buy / sell
+            qty = f.get("count", 0)
+            price = f.get("price", 0)
+            timestamp = f.get("created_time", "")
+            
+            positions.append({
+                "date": timestamp,
+                "ticker": ticker,
+                "title": ticker,
+                "side": f"{action.upper()} {side}",
+                "quantity": qty,
+                "price": price / 100.0  # Normalized to dollars
+            })
+            
+        cursor = data.get("cursor")
+        if not cursor:
+            break
+            
+    positions.sort(key=lambda x: x["date"], reverse=True)
+    return positions
+
+
+def get_polymarket_recent_trades(wallet_address: str = None, days: int = 14) -> list[dict]:
+    """Fetch recent order history (trades) from Polymarket Data API without needing private keys."""
+    addr = wallet_address or os.getenv("POLYMARKET_WALLET_ADDRESS", "")
+    if not addr:
+        return []
+        
+    trades = []
+    limit = 100
+    offset = 0
+    min_ts = int((datetime.datetime.now() - datetime.timedelta(days=days)).timestamp())
+    
+    while True:
+        try:
+            url = f"{POLYMARKET_DATA_API}/trades"
+            r = requests.get(
+                url,
+                params={
+                    "user": addr, 
+                    "limit": limit,
+                    "offset": offset
+                },
+                timeout=REQUEST_TIMEOUT,
+            )
+            r.raise_for_status()
+            raw = r.json()
+        except Exception as e:
+            print(f"[portfolio] Polymarket trades error: {e}")
+            break
+
+        if not raw:
+            break
+            
+        for t in raw:
+            ts = t.get("timestamp", 0)
+            if ts < min_ts:
+                continue
+                
+            qty = float(t.get("size", 0) or 0)
+            price = float(t.get("price", 0) or 0)
+            side = f"{t.get('side', '')} {t.get('outcome', '')}" # e.g. BUY Yes
+            slug = t.get("slug", "")
+            title = t.get("title", slug)
+            
+            # Format date string for consistency with Kalshi
+            try:
+                date_str = datetime.datetime.fromtimestamp(ts, tz=datetime.timezone.utc).isoformat()
+            except:
+                date_str = str(ts)
+                
+            trades.append({
+                "date": date_str,
+                "ticker": slug,
+                "title": title,
+                "side": side,
+                "quantity": qty,
+                "price": price
+            })
+            
+        if raw and raw[-1].get("timestamp", 0) < min_ts:
+            break
+            
+        if len(raw) < limit:
+            break
+        offset += limit
+        
+    trades.sort(key=lambda x: x["date"], reverse=True)
+    return trades
+
+
+# =========================
 # Pretty Printer
 # =========================
 

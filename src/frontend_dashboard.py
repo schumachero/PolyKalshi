@@ -11,6 +11,7 @@ import json
 import base64
 import requests
 from datetime import datetime, timedelta
+from dotenv import load_dotenv
 
 # --- CLEAN PATH SETUP ---
 import sys
@@ -25,6 +26,17 @@ for path in [PROJECT_ROOT, SRC_DIR]:
     if path not in sys.path:
         sys.path.insert(0, path)
 
+# 1) Try to load explicit .env file from project root (for local usage)
+load_dotenv(os.path.join(PROJECT_ROOT, ".env"))
+
+# 2) Sync Streamlit Secrets into environment variables (for cloud usage)
+try:
+    for k, v in st.secrets.items():
+        if isinstance(v, str) and k not in os.environ:
+            os.environ[k] = v
+except Exception:
+    pass
+
 # Define defaults first to avoid NameError if imports fail non-traditionally
 def get_kalshi_positions(): return []
 def get_polymarket_positions(): return []
@@ -34,12 +46,12 @@ def generate_semantic_matches(k, p, threshold=0.3): return pd.DataFrame()
 
 # Use absolute 'src.' imports (standard for Streamlit Cloud with src/ folder)
 try:
-    from src.apis.portfolio import get_kalshi_positions, get_polymarket_positions, get_kalshi_balance, get_polymarket_balance
+    from src.apis.portfolio import get_kalshi_positions, get_polymarket_positions, get_kalshi_balance, get_polymarket_balance, get_kalshi_recent_trades, get_polymarket_recent_trades
     from src.matching.semantic_matching import generate_semantic_matches
 except ImportError:
     try:
         # Fallback for environments where 'src' is the root or already in path
-        from apis.portfolio import get_kalshi_positions, get_polymarket_positions, get_kalshi_balance, get_polymarket_balance
+        from apis.portfolio import get_kalshi_positions, get_polymarket_positions, get_kalshi_balance, get_polymarket_balance, get_kalshi_recent_trades, get_polymarket_recent_trades
         from matching.semantic_matching import generate_semantic_matches
     except ImportError as e:
         st.error(f"Import Warning: {e}. Dashboard functionality may be limited.")
@@ -708,6 +720,41 @@ def main():
         st.divider()
         st.markdown("**Raw Data API Feed**")
         st.dataframe(df, use_container_width=True)
+
+    st.divider()
+
+    # 6. Recent Trade History (Last 14 Days)
+    st.subheader("⏱️ Recent Trade History (Last 14 Days)")
+    st.markdown("Recent filled orders across both platforms.")
+    
+    col_r1, col_r2 = st.columns(2)
+    with col_r1:
+        st.markdown("##### Kalshi Trades")
+        with st.spinner("Fetching Kalshi trades..."):
+            try:
+                k_trades = get_kalshi_recent_trades(days=14)
+                if k_trades:
+                    k_trade_df = pd.DataFrame(k_trades)
+                    k_trade_df['date'] = pd.to_datetime(k_trade_df['date']).dt.strftime('%Y-%m-%d %H:%M')
+                    st.dataframe(k_trade_df[['date', 'title', 'side', 'quantity', 'price']], use_container_width=True, hide_index=True)
+                else:
+                    st.info("No Kalshi trades in the last 14 days.")
+            except Exception as e:
+                st.error(f"Error fetching Kalshi trades: {e}")
+                
+    with col_r2:
+        st.markdown("##### Polymarket Trades")
+        with st.spinner("Fetching Polymarket trades..."):
+            try:
+                p_trades = get_polymarket_recent_trades(WALLET_ADDR, days=14)
+                if p_trades:
+                    p_trade_df = pd.DataFrame(p_trades)
+                    p_trade_df['date'] = pd.to_datetime(p_trade_df['date']).dt.strftime('%Y-%m-%d %H:%M')
+                    st.dataframe(p_trade_df[['date', 'title', 'side', 'quantity', 'price']], use_container_width=True, hide_index=True)
+                else:
+                    st.info("No Polymarket trades in the last 14 days.")
+            except Exception as e:
+                 st.warning(f"Error fetching Polymarket trades: {e}")
 
 
 if __name__ == "__main__":
