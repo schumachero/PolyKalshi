@@ -126,12 +126,18 @@ def get_kalshi_orderbook(market_ticker, levels=DEFAULT_LEVELS):
         }
     }
 
+def fetch_polymarket_market_exact(market_slug_or_id: str):
+    if market_slug_or_id.isdigit():
+        url = f"{POLYMARKET_GAMMA}/markets/{market_slug_or_id}"
+    else:
+        url = f"{POLYMARKET_GAMMA}/markets/slug/{market_slug_or_id}"
+
+    r = requests.get(url, timeout=REQUEST_TIMEOUT)
+    r.raise_for_status()
+    return r.json()
+
 
 def get_polymarket_orderbook(market_ticker, levels=DEFAULT_LEVELS):
-    """
-    Fetch market details to get token IDs, then fetch both bids and asks from CLOB.
-    """
-    # Normalize ticker so pandas ints/floats don't break .isdigit()
     if pd.isna(market_ticker):
         print("Error: Polymarket market ticker is missing.")
         return {"yes": {"bids": [], "asks": []}, "no": {"bids": [], "asks": []}}
@@ -142,32 +148,41 @@ def get_polymarket_orderbook(market_ticker, levels=DEFAULT_LEVELS):
         market_ticker = str(market_ticker).strip()
 
     try:
-        # Use query parameters for slug, as path-based slug lookup is not reliable on Gamma
-        params = {"id": market_ticker} if market_ticker.isdigit() else {"slug": market_ticker}
-
-        m_r = requests.get(f"{POLYMARKET_GAMMA}/markets", params=params, timeout=REQUEST_TIMEOUT)
-        m_r.raise_for_status()
-        market_data = m_r.json()
-
-        if isinstance(market_data, list) and len(market_data) > 0:
-            market_data = market_data[0]
-        elif not market_data:
-            print(f"Error: Polymarket market {market_ticker} not found.")
-            return {"yes": {"bids": [], "asks": []}, "no": {"bids": [], "asks": []}}
-
+        market_data = fetch_polymarket_market_exact(market_ticker)
     except Exception as e:
-        print(f"Error fetching Polymarket market {market_ticker}: {e}")
+        print(f"Error fetching exact Polymarket market {market_ticker}: {e}")
+        return {"yes": {"bids": [], "asks": []}, "no": {"bids": [], "asks": []}}
+
+    # Helpful debug
+    #print(
+    #    "POLY DEBUG | "
+    #    f"requested={market_ticker} | "
+    #    f"resolved_slug={market_data.get('slug')} | "
+    #    f"question={market_data.get('question')} | "
+    #    f"enableOrderBook={market_data.get('enableOrderBook')} | "
+    #    f"pendingDeployment={market_data.get('pendingDeployment')} | "
+    #    f"active={market_data.get('active')} | "
+    #    f"closed={market_data.get('closed')}"
+    #)
+
+    if market_data.get("closed", False):
+        print(f"Polymarket market {market_ticker} is closed; skipping orderbook fetch.")
+        return {"yes": {"bids": [], "asks": []}, "no": {"bids": [], "asks": []}}
+
+    if not market_data.get("enableOrderBook", False):
+        print(f"Polymarket market {market_ticker} has enableOrderBook=False; skipping.")
+        return {"yes": {"bids": [], "asks": []}, "no": {"bids": [], "asks": []}}
+
+    if market_data.get("pendingDeployment", False):
+        print(f"Polymarket market {market_ticker} is pending deployment; skipping.")
         return {"yes": {"bids": [], "asks": []}, "no": {"bids": [], "asks": []}}
 
     tokens = market_data.get("clobTokenIds", [])
     if isinstance(tokens, str):
-        try:
-            tokens = json.loads(tokens)
-        except Exception:
-            pass
+        tokens = json.loads(tokens)
 
     if not tokens or len(tokens) < 2:
-        print(f"Polymarket market {market_ticker} does not have standard clobTokenIds.")
+        print(f"Polymarket market {market_ticker} does not have usable clobTokenIds.")
         return {"yes": {"bids": [], "asks": []}, "no": {"bids": [], "asks": []}}
 
     yes_token, no_token = tokens[0], tokens[1]
@@ -178,8 +193,6 @@ def get_polymarket_orderbook(market_ticker, levels=DEFAULT_LEVELS):
             r = requests.get(url, timeout=REQUEST_TIMEOUT)
             r.raise_for_status()
             data = r.json()
-            bids_raw = data.get("bids", [])
-            asks_raw = data.get("asks", [])
         except Exception as e:
             print(f"Error fetching Polymarket CLOB for token {token_id}: {e}")
             return {"bids": [], "asks": []}
@@ -188,21 +201,18 @@ def get_polymarket_orderbook(market_ticker, levels=DEFAULT_LEVELS):
             parsed = []
             for item in arr:
                 try:
-                    price = float(item.get("price", 0))
-                    qty = float(item.get("size", 0))
                     parsed.append({
-                        "price": round(price, 4),
-                        "volume": round(qty, 4)
+                        "price": round(float(item.get("price", 0)), 4),
+                        "volume": round(float(item.get("size", 0)), 4),
                     })
                 except (TypeError, ValueError):
                     continue
-
             parsed.sort(key=lambda x: x["price"], reverse=is_bid)
             return parsed[:levels]
 
         return {
-            "bids": parse_array(bids_raw, is_bid=True),
-            "asks": parse_array(asks_raw, is_bid=False)
+            "bids": parse_array(data.get("bids", []), True),
+            "asks": parse_array(data.get("asks", []), False),
         }
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=THREAD_POOL_WORKERS) as executor:
@@ -210,9 +220,10 @@ def get_polymarket_orderbook(market_ticker, levels=DEFAULT_LEVELS):
         no_future = executor.submit(fetch_clob_book, no_token)
         return {
             "yes": yes_future.result(),
-            "no": no_future.result()
+            "no": no_future.result(),
         }
-
+    
+    
 def get_matched_orderbooks(kalshi_ticker, polymarket_ticker, levels=DEFAULT_LEVELS):
     """
     Returns structured data containing orderbook levels from both platforms.
@@ -228,7 +239,7 @@ def get_matched_orderbooks(kalshi_ticker, polymarket_ticker, levels=DEFAULT_LEVE
 
 
 def run_batch_fetch(
-    matches_csv="Data/predicted_equivalent_markets_with_close_times.csv",
+    matches_csv="Data/predicted_equivalent_markets.csv",
     output_csv="Data/matched_orderbooks.csv",
     levels=DEFAULT_LEVELS,
 ):

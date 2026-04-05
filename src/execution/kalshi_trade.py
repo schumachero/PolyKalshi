@@ -61,13 +61,6 @@ def place_limit_order(
     time_in_force: str = "fill_or_kill",
     client_order_id: str | None = None,
 ) -> dict:
-    """
-    Place a simple Kalshi limit order.
-
-    side: yes or no
-    action: buy or sell
-    price_cents: 1..99
-    """
     side = side.lower()
     action = action.lower()
 
@@ -80,6 +73,8 @@ def place_limit_order(
     if not (1 <= price_cents <= 99):
         raise ValueError("price_cents must be between 1 and 99")
 
+    resolved_client_order_id = client_order_id or str(uuid.uuid4())
+
     payload = {
         "ticker": ticker,
         "type": "limit",
@@ -87,7 +82,7 @@ def place_limit_order(
         "action": action,
         "count": int(count),
         "time_in_force": time_in_force,
-        "client_order_id": client_order_id or str(uuid.uuid4()),
+        "client_order_id": resolved_client_order_id,
     }
 
     if side == "yes":
@@ -99,11 +94,28 @@ def place_limit_order(
     path = f"/trade-api/v2{endpoint}"
     url = f"{KALSHI_BASE}{endpoint}"
 
+    print("KALSHI ORDER DEBUG:", {
+        "ticker": ticker,
+        "side": side,
+        "action": action,
+        "count": count,
+        "price_cents": price_cents,
+        "time_in_force": time_in_force,
+        "client_order_id": resolved_client_order_id,
+        "url": url,
+    })
+
     r = requests.post(
         url,
         json=payload,
         headers=_auth_headers("POST", path),
         timeout=REQUEST_TIMEOUT,
     )
-    r.raise_for_status()
+
+    if r.status_code >= 400:
+        print("KALSHI ERROR STATUS:", r.status_code)
+        print("KALSHI ERROR BODY:", r.text)
+        print("KALSHI ERROR CLIENT_ORDER_ID:", resolved_client_order_id)
+        r.raise_for_status()
+
     return r.json()

@@ -94,7 +94,7 @@ todo 14.1 SOLVED
 
 Create frontend for the dashboard, so that it can be accessed through a browser.
 
-todo 15.1
+todo 15.1 SOLVED
 
 add history tracking fo the dashboard, should preferably only show relative movement to prevent uneccessary movement during addition of funds.
 

@@ -2,7 +2,7 @@ name: Run History Action
 
 on:
   schedule:
-    - cron: '0 0,12 * * *' # Every 12 hours (00:00 and 12:00 UTC)
+    - cron: '17 0,12 * * *' # Every 12 hours (00:17 and 12:17)
   workflow_dispatch: # Manual trigger
 
 jobs:
