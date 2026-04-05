@@ -2,7 +2,10 @@ name: Run Trade Action
 
 on:
   schedule:
-    - cron: '0 * * * *' # every hour
+    - cron: '23 0/3 * * *' # 2000 available minutes per month, 2 min/day for logging, leaves 62 min/day for trading.timezone
+    # expected 2 minutes setup per run then 5 minutes for execution would allow for trade action to run every 3 hours, this 
+    # could be reduced if we can optimize the requirements for running, if we could scale total run execution to 5 minutes we
+    # can run every 2 hours with around 12 second margin for each run.
   workflow_dispatch: # Manual trigger
 
 jobs:
@@ -12,16 +15,19 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: "requirements-trade.txt"
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-          cache: 'pip' # Cache så att programmet inte behöver installera om alla bibliotek varje gång det körs.
 
       - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
+        run: uv pip install --system -r requirements-trade.txt
 
       - name: Create Data directory
         run: mkdir -p Data

@@ -1,7 +1,6 @@
 import os
 import argparse
 import pandas as pd
-import matplotlib.pyplot as plt
 
 
 ARBITRAGE_HISTORY_CSV = "Data/history/arbitrage_snapshots.csv"
@@ -117,6 +116,12 @@ def plot_arbitrage_history(
     min_profit: float | None = None,
     figsize=(16, 9),
 ):
+    try:
+        import matplotlib.pyplot as plt
+    except ImportError:
+        print("[plot_arbitrage_history] Warning: matplotlib not installed. Skipping plot generation.")
+        return
+
     if not os.path.exists(input_csv):
         raise FileNotFoundError(f"Missing file: {input_csv}")
 
