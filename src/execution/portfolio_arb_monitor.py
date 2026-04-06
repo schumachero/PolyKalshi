@@ -5,7 +5,12 @@ import math
 import argparse
 from datetime import datetime, timezone
 from typing import Dict, List, Optional
-from apis.portfolio import get_kalshi_balance, get_polymarket_balance
+try:
+    from apis.portfolio import get_kalshi_balance, get_polymarket_balance
+except ImportError:
+    import sys
+    sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    from apis.portfolio import get_kalshi_balance, get_polymarket_balance
 import pandas as pd
 
 # =========================================================
