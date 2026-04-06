@@ -5,7 +5,7 @@ import math
 import argparse
 from datetime import datetime, timezone
 from typing import Dict, List, Optional
-
+from src.apis.portfolio import get_kalshi_balance, get_polymarket_balance
 import pandas as pd
 
 # =========================================================
@@ -144,6 +144,79 @@ def normalize_str(x) -> str:
 def truthy(x) -> bool:
     return normalize_str(x).lower() in {"1", "true", "yes", "y", "on"}
 
+BALANCE_BUFFER_USD = 1.00
+
+def get_kalshi_available_usd() -> float:
+    bal = get_kalshi_balance()
+    if not bal:
+        return 0.0
+    return safe_float(bal.get("available_cents", 0)) / 100.0
+
+
+def get_polymarket_available_usd() -> float:
+    wallet = os.getenv("POLYMARKET_WALLET_ADDRESS", "")
+    if not wallet:
+        return 0.0
+    return safe_float(get_polymarket_balance(wallet), 0.0)
+
+
+def size_trade_to_available_balances(arb: dict) -> dict:
+    """
+    Shrink contracts so both legs are affordable.
+    Assumes both legs are BUY orders.
+    """
+    original_contracts = int(math.floor(arb["contracts"]))
+    if original_contracts <= 0:
+        return {
+            "ok": False,
+            "reason": "contracts rounded to 0",
+        }
+
+    kalshi_available_usd = get_kalshi_available_usd()
+    polymarket_available_usd = get_polymarket_available_usd()
+
+    kalshi_spendable = max(kalshi_available_usd - BALANCE_BUFFER_USD, 0.0)
+    poly_spendable = max(polymarket_available_usd - BALANCE_BUFFER_USD, 0.0)
+
+    max_contracts_kalshi = int(math.floor(kalshi_spendable / max(arb["price_a"], 1e-12)))
+    max_contracts_poly = int(math.floor(poly_spendable / max(arb["price_b"], 1e-12)))
+
+    final_contracts = min(
+        original_contracts,
+        max_contracts_kalshi,
+        max_contracts_poly,
+    )
+
+    if final_contracts <= 0:
+        return {
+            "ok": False,
+            "reason": (
+                f"Insufficient balance | "
+                f"Kalshi available=${kalshi_available_usd:.2f}, "
+                f"Polymarket available=${polymarket_available_usd:.2f}"
+            ),
+            "kalshi_available_usd": kalshi_available_usd,
+            "polymarket_available_usd": polymarket_available_usd,
+        }
+
+    kalshi_required_usd = final_contracts * arb["price_a"]
+    polymarket_required_usd = final_contracts * arb["price_b"]
+
+    sized_arb = dict(arb)
+    sized_arb["contracts"] = final_contracts
+    sized_arb["notional_usd"] = final_contracts * arb["sum_price"]
+    sized_arb["gross_profit_usd"] = final_contracts * (1.0 - arb["sum_price"])
+
+    return {
+        "ok": True,
+        "arb": sized_arb,
+        "kalshi_available_usd": kalshi_available_usd,
+        "polymarket_available_usd": polymarket_available_usd,
+        "kalshi_required_usd": kalshi_required_usd,
+        "polymarket_required_usd": polymarket_required_usd,
+        "max_contracts_kalshi": max_contracts_kalshi,
+        "max_contracts_poly": max_contracts_poly,
+    }
 
 def normalize_book_side(levels) -> List[Dict[str, float]]:
     """
@@ -453,21 +526,43 @@ def reverify_pair_live(pair_row: pd.Series, original_arb: dict) -> dict:
 
 def place_dual_orders(pair_row: pd.Series, arb: dict) -> dict:
     """
-    Place both legs using weighted-average prices from the simulated executable fill.
+    Place both legs, but first shrink size to available balances on both venues.
     """
     kalshi_ticker = normalize_str(pair_row["kalshi_ticker"])
     polymarket_slug = normalize_str(pair_row["polymarket_ticker"])
 
+    balance_check = size_trade_to_available_balances(arb)
+    if not balance_check["ok"]:
+        return {
+            "status": "skipped",
+            "message": balance_check["reason"],
+        }
+
+    arb = balance_check["arb"]
     contracts = int(math.floor(arb["contracts"]))
+
     if contracts <= 0:
-        return {"status": "skipped", "message": "contracts rounded to 0"}
+        return {"status": "skipped", "message": "contracts rounded to 0 after balance sizing"}
 
     kalshi_price_cents = int(round(arb["price_a"] * 100))
     polymarket_price = round(arb["price_b"], 6)
 
+    print(
+        "BALANCE CHECK:",
+        {
+            "kalshi_available_usd": round(balance_check["kalshi_available_usd"], 2),
+            "polymarket_available_usd": round(balance_check["polymarket_available_usd"], 2),
+            "kalshi_required_usd": round(balance_check["kalshi_required_usd"], 2),
+            "polymarket_required_usd": round(balance_check["polymarket_required_usd"], 2),
+            "max_contracts_kalshi": balance_check["max_contracts_kalshi"],
+            "max_contracts_poly": balance_check["max_contracts_poly"],
+            "contracts_sent": contracts,
+        }
+    )
+
     kalshi_resp = kalshi_place_limit_order(
         ticker=kalshi_ticker,
-        side=arb["kalshi_side"],      # "yes" or "no"
+        side=arb["kalshi_side"],
         action="buy",
         count=contracts,
         price_cents=kalshi_price_cents,
@@ -476,7 +571,7 @@ def place_dual_orders(pair_row: pd.Series, arb: dict) -> dict:
 
     poly_resp = polymarket_place_limit_order(
         slug=polymarket_slug,
-        outcome=arb["polymarket_outcome"],  # "YES" or "NO"
+        outcome=arb["polymarket_outcome"],
         size=contracts,
         price=polymarket_price,
         side="BUY",
@@ -496,7 +591,6 @@ def place_dual_orders(pair_row: pd.Series, arb: dict) -> dict:
         "gross_profit_usd": contracts * (1.0 - arb["sum_price"]),
         "message": "",
     }
-
 
 # =========================================================
 # Pair processing
