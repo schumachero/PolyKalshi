@@ -39,4 +39,4 @@ jobs:
           POLYMARKET_WALLET_ADDRESS: ${{ secrets.POLYMARKET_WALLET_ADDRESS }}
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        run: python src/execution/portfolio_arb_monitor.py # <---The file we intend to run
+        run: python src/execution/portfolio_arb_monitor.py --live # <---The file we intend to run
