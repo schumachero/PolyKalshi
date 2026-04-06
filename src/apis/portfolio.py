@@ -345,70 +345,53 @@ def get_polymarket_balance(addr: str) -> float:
 # =========================
 
 def get_kalshi_recent_trades(days: int = 14) -> list[dict]:
-    """Fetch order history (fills) for the past N days, grouped by order."""
+    """Fetch recent orders for the past N days."""
     min_ts = int((datetime.datetime.now() - datetime.timedelta(days=days)).timestamp())
     
     cursor = None
-    grouped = {}
+    positions = []
     
     while True:
         params = {"limit": 200, "min_ts": min_ts}
         if cursor:
             params["cursor"] = cursor
             
-        data = _kalshi_get("/portfolio/fills", params=params)
+        data = _kalshi_get("/portfolio/orders", params=params)
         if not data:
             break
             
-        fills = data.get("fills", [])
-        if not fills:
+        orders = data.get("orders", [])
+        if not orders:
             break
             
-        for f in fills:
-            order_id = f.get("order_id", f.get("fill_id", ""))
-            
-            if order_id not in grouped:
-                ticker = f.get("ticker", "")
-                side = f.get("side", "")
-                action = f.get("action", "") # buy / sell
+        for o in orders:
+            if o.get("status") not in ["executed", "partial"]:
+                continue
                 
-                grouped[order_id] = {
-                    "date": f.get("created_time", ""),
-                    "ts": f.get("ts", 0),
-                    "ticker": ticker,
-                    "title": ticker,
-                    "side": f"{action.upper()} {side.upper()}",
-                    "total_qty": 0.0,
-                    "total_cost": 0.0
-                }
+            qty = float(o.get("fill_count_fp", 0) or 0)
+            if qty <= 0:
+                continue
                 
-            qty = float(f.get("count_fp", 0) or 0)
+            side = o.get("side", "yes").lower()
+            action = o.get("action", "").upper()
+            ticker = o.get("ticker", "")
             
-            # Kalshi API provides yes_price_dollars or no_price_dollars
-            fill_side = f.get("side", "yes").lower()
-            price_field = f"{fill_side}_price_dollars"
-            price = float(f.get(price_field, 0) or 0)
+            # Use the side from the order to get the correct execution price
+            price_field = f"{side}_price_dollars"
+            price = float(o.get(price_field, 0) or 0)
             
-            grouped[order_id]["total_qty"] += qty
-            grouped[order_id]["total_cost"] += (qty * price)
+            positions.append({
+                "date": o.get("created_time", ""),
+                "ticker": ticker,
+                "title": ticker,
+                "side": f"{action} {side.upper()}",
+                "quantity": qty,
+                "price": price
+            })
             
         cursor = data.get("cursor")
         if not cursor:
             break
-            
-    positions = []
-    for order_id, g in grouped.items():
-        qty = g["total_qty"]
-        avg_price = (g["total_cost"] / qty) if qty > 0 else 0
-        
-        positions.append({
-            "date": g["date"],
-            "ticker": g["ticker"],
-            "title": g["title"],
-            "side": g["side"],
-            "quantity": qty,
-            "price": avg_price
-        })
             
     positions.sort(key=lambda x: x["date"], reverse=True)
     return positions
