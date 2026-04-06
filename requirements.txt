@@ -9,3 +9,4 @@ sentence-transformers
 streamlit>=1.30.0
 plotly
 altair<5
+py-clob-client
