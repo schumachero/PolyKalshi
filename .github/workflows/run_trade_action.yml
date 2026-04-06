@@ -37,6 +37,8 @@ jobs:
           KALSHI_ACCESS_KEY: ${{ secrets.KALSHI_ACCESS_KEY }}
           KALSHI_RSA_PRIVATE_KEY: ${{ secrets.KALSHI_RSA_PRIVATE_KEY }}
           POLYMARKET_WALLET_ADDRESS: ${{ secrets.POLYMARKET_WALLET_ADDRESS }}
+          POLY_FUNDER_ADDRESS: ${{ secrets.POLY_FUNDER_ADDRESS }}
+          POLY_PRIVATE_KEY: ${{ secrets.POLY_PRIVATE_KEY }}
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        run: python src/execution/portfolio_arb_monitor.py # <---The file we intend to run
+        run: python src/execution/portfolio_arb_monitor.py --live # <---The file we intend to run
