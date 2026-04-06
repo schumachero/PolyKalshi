@@ -428,11 +428,17 @@ def main():
         except:
             pass # Fallback to 0 if history is malformed
 
-    m1, m2, m3, m4 = st.columns(4)
+    # --- TERMINAL VALUE ---
+    # Cash + (total contracts / 2) * $1.00
+    total_contracts = df[df['Ticker'] != 'CASH']['Quantity'].sum()
+    terminal_val = cash_val + (total_contracts / 2) * 1.0
+
+    m1, m2, m3, m4, m5 = st.columns(5)
     m1.metric("Net Asset Value", f"${total_val:,.2f}", f"{total_profit:+.2f} ({profit_pct:+.2f}%)")
-    m2.metric("Portfolio Weight", f"${invested_val:,.2f}")
-    m3.metric("Available Cash", f"${cash_val:,.2f}")
-    m4.metric("Last Update", adj_time)
+    m2.metric("Terminal Value", f"${terminal_val:,.2f}", help="Cash + (Total Contracts ÷ 2) × $1")
+    m3.metric("Portfolio Weight", f"${invested_val:,.2f}")
+    m4.metric("Available Cash", f"${cash_val:,.2f}")
+    m5.metric("Last Update", adj_time)
 
 
     st.divider()
