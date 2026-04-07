@@ -407,7 +407,8 @@ def main():
     total_val = df['Value_USD'].sum()      # Cash + Positions
     cash_val = df[df['Ticker'] == 'CASH']['Value_USD'].sum()
     invested_val = total_val - cash_val
-    adj_time = datetime.now(tz=DISPLAY_TIMEZONE).strftime("%H:%M:%S")
+    # Add 2 hour offset as requested
+    adj_time = (datetime.now(tz=DISPLAY_TIMEZONE) + timedelta(hours=2)).strftime("%H:%M:%S")
 
     # --- RESET-AWARE PROFIT ---
     total_profit = 0.0
