@@ -407,8 +407,8 @@ def main():
     total_val = df['Value_USD'].sum()      # Cash + Positions
     cash_val = df[df['Ticker'] == 'CASH']['Value_USD'].sum()
     invested_val = total_val - cash_val
-    # Add 2 hour offset as requested
-    adj_time = (datetime.now(tz=DISPLAY_TIMEZONE) + timedelta(hours=2)).strftime("%H:%M:%S")
+    # Use stockholm timezone directly
+    adj_time = datetime.now(tz=DISPLAY_TIMEZONE).strftime("%H:%M:%S")
 
     # --- RESET-AWARE PROFIT ---
     total_profit = 0.0
@@ -746,7 +746,8 @@ def main():
                 k_trades = get_kalshi_recent_trades(days=14)
                 if k_trades:
                     k_trade_df = pd.DataFrame(k_trades)
-                    k_trade_df['date'] = pd.to_datetime(k_trade_df['date']).dt.strftime('%Y-%m-%d %H:%M')
+                    # Convert to timezone aware datetime, then to local timezone, then format
+                    k_trade_df['date'] = pd.to_datetime(k_trade_df['date']).dt.tz_convert(DISPLAY_TIMEZONE).dt.strftime('%Y-%m-%d %H:%M')
                     st.dataframe(k_trade_df[['date', 'title', 'side', 'quantity', 'price']], use_container_width=True, hide_index=True)
                 else:
                     st.info("No Kalshi trades in the last 14 days.")
@@ -760,7 +761,8 @@ def main():
                 p_trades = get_polymarket_recent_trades(WALLET_ADDR, days=14)
                 if p_trades:
                     p_trade_df = pd.DataFrame(p_trades)
-                    p_trade_df['date'] = pd.to_datetime(p_trade_df['date']).dt.strftime('%Y-%m-%d %H:%M')
+                    # Convert to timezone aware datetime, then to local timezone, then format
+                    p_trade_df['date'] = pd.to_datetime(p_trade_df['date']).dt.tz_convert(DISPLAY_TIMEZONE).dt.strftime('%Y-%m-%d %H:%M')
                     st.dataframe(p_trade_df[['date', 'title', 'side', 'quantity', 'price']], use_container_width=True, hide_index=True)
                 else:
                     st.info("No Polymarket trades in the last 14 days.")
