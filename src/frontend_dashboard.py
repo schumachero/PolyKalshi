@@ -11,6 +11,7 @@ import json
 import base64
 import requests
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 from dotenv import load_dotenv
 
 # --- CLEAN PATH SETUP ---
@@ -107,7 +108,7 @@ def push_to_github(file_path, content, message):
 
 EXIT_TARGET = 0.99
 INVEST_TARGET = 0.95
-TIME_OFFSET_HOURS = 2 
+DISPLAY_TIMEZONE = ZoneInfo("Europe/Stockholm")
 VOLUME_PERCENTILE_THRESHOLD = 0.20 # 20% of position (decimal)
 VOLUME_FIXED_THRESHOLD = 10 # $10 worth
 
@@ -406,7 +407,7 @@ def main():
     total_val = df['Value_USD'].sum()      # Cash + Positions
     cash_val = df[df['Ticker'] == 'CASH']['Value_USD'].sum()
     invested_val = total_val - cash_val
-    adj_time = (datetime.now() + timedelta(hours=TIME_OFFSET_HOURS)).strftime("%H:%M:%S")
+    adj_time = datetime.now(tz=DISPLAY_TIMEZONE).strftime("%H:%M:%S")
 
     # --- RESET-AWARE PROFIT ---
     total_profit = 0.0
