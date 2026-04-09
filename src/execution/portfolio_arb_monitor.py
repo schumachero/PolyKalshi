@@ -6,11 +6,21 @@ import argparse
 from datetime import datetime, timezone
 from typing import Dict, List, Optional
 try:
-    from apis.portfolio import get_kalshi_balance, get_polymarket_balance
+    from apis.portfolio import (
+        get_kalshi_balance, 
+        get_polymarket_balance, 
+        get_kalshi_positions, 
+        get_polymarket_positions
+    )
 except ImportError:
     import sys
     sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    from apis.portfolio import get_kalshi_balance, get_polymarket_balance
+    from apis.portfolio import (
+        get_kalshi_balance, 
+        get_polymarket_balance, 
+        get_kalshi_positions, 
+        get_polymarket_positions
+    )
 import pandas as pd
 
 # =========================================================
@@ -56,12 +66,247 @@ POLY_FEE_BUFFER = 0.0
 # Reverify against live books again immediately before sending orders
 DEFAULT_REVERIFY_BOOKS = True
 
+# Performance & Swap Configuration
+DEFAULT_SWAP_HURDLE_APY = 15.0      # Only swap if new APY is 15% better
+DEFAULT_MIN_SWAP_GAIN_USD = 1.00    # Absolute minimum expected profit gain to swap
+DEFAULT_MAX_PORTFOLIO_PCT_PER_PAIR = 0.20 # 20% limit per pair for diversification
+SWAP_FEE_CUSHION_PCT = 1.0         # 1% buffer for fees/slippage when calculating swap feasibility
+
 # =========================================================
 # Helpers
 # =========================================================
 
 def utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def parse_date(date_str: str) -> Optional[datetime]:
+    if not date_str or str(date_str).strip() == "" or pd.isna(date_str):
+        return None
+    try:
+        dt_str = str(date_str).strip()
+        # Handle formats like 2026-03-31 or ISO 2026-03-31T23:59:59Z
+        if 'T' in dt_str:
+            # fromisoformat handles +00:00; replace Z for compatibility with older Python if needed
+            ds = dt_str.replace('Z', '+00:00')
+            return datetime.fromisoformat(ds)
+        else:
+            return datetime.strptime(dt_str, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+    except Exception:
+        return None
+
+
+def calculate_apy(profit_pct: float, close_time_str: str) -> float:
+    """
+    Returns linear APY.
+    """
+    close_dt = parse_date(close_time_str)
+    if not close_dt:
+        return 0.0
+
+    now = datetime.now(timezone.utc)
+    delta = close_dt - now
+    days = max(delta.total_seconds() / 86400.0, 0.1)  # floor at 0.1 days to avoid div by zero
+
+    return (profit_pct * 365.0) / days
+
+
+def get_current_exposure(tracked_pairs_df: pd.DataFrame) -> dict:
+    """
+    Fetch live positions and map them to our tracked pairs.
+    """
+    print("Fetching live positions for exposure check...")
+    try:
+        k_pos = get_kalshi_positions()
+    except Exception as e:
+        print(f"Error fetching Kalshi positions: {e}")
+        k_pos = []
+    
+    try:
+        p_pos = get_polymarket_positions()
+    except Exception as e:
+        print(f"Error fetching Polymarket positions: {e}")
+        p_pos = []
+
+    exposure = {}
+    
+    # Map Kalshi/Poly tickers to pair_id
+    k_to_pair = {}
+    p_to_pair = {}
+    for _, row in tracked_pairs_df.iterrows():
+        kt = normalize_str(row.get('kalshi_ticker'))
+        pt = normalize_str(row.get('polymarket_ticker'))
+        pid = normalize_str(row.get('pair_id', f"{kt}__{pt}"))
+        
+        k_to_pair[kt] = pid
+        p_to_pair[pt] = pid
+        exposure[pid] = {
+            "pair_id": pid,
+            "contracts_kalshi": 0,
+            "kalshi_side": "",
+            "contracts_poly": 0,
+            "polymarket_side": "",
+            "value_usd": 0.0,
+            "kalshi_ticker": kt,
+            "polymarket_ticker": pt,
+            "close_time": normalize_str(row.get('close_time', ""))
+        }
+
+    total_val = 0.0
+    for pos in k_pos:
+        tic = normalize_str(pos['ticker'])
+        if tic in k_to_pair:
+            pid = k_to_pair[tic]
+            exposure[pid]["contracts_kalshi"] += pos['quantity']
+            exposure[pid]["kalshi_side"] = pos['side'].lower() # yes/no
+            val = safe_float(pos.get('market_exposure_cents', 0)) / 100.0
+            exposure[pid]["value_usd"] += val
+            total_val += val
+
+    for pos in p_pos:
+        tic = normalize_str(pos['market_id'])
+        if tic in p_to_pair:
+            pid = p_to_pair[tic]
+            exposure[pid]["contracts_poly"] += pos['size']
+            exposure[pid]["polymarket_side"] = pos['side'].upper() # YES/NO
+            val = safe_float(pos.get('current_value', 0))
+            exposure[pid]["value_usd"] += val
+            total_val += val
+            
+    return {
+        "total_portfolio_usd": total_val,
+        "pair_exposure": exposure
+    }
+
+
+def calculate_holding_apy(exposure_info: dict) -> float:
+    """
+    Calculate the APY we get if we hold the CURRENT position to maturity.
+    Payout is 1.0 per contract. Cost is current 'value_usd'.
+    """
+    val = exposure_info['value_usd']
+    contracts = max(exposure_info['contracts_kalshi'], exposure_info['contracts_poly'])
+    
+    if val <= 0 or contracts <= 0:
+        return 0.0
+    
+    # If we hold, we get 'contracts' dollars.
+    # Current value is 'val'.
+    profit_pct = (contracts / val - 1.0) * 100.0
+    return calculate_apy(profit_pct, exposure_info['close_time'])
+
+
+def liquidate_pair(pair_id: str, exposure: dict, dry_run: bool = True) -> dict:
+    """
+    Sell all held contracts for a pair.
+    Uses aggressive limit orders (selling into Bids).
+    """
+    info = exposure.get(pair_id)
+    if not info:
+        return {"status": "error", "message": "Pair not found in exposure"}
+    
+    k_qty = int(info['contracts_kalshi'])
+    p_qty = int(info['contracts_poly'])
+    
+    if k_qty <= 0 and p_qty <= 0:
+        return {"status": "skipped", "message": "No contracts to liquidate"}
+        
+    if dry_run:
+        return {"status": "dry_run", "message": f"Would liquidate {k_qty} {info['kalshi_side']} on Kalshi and {p_qty} {info['polymarket_side']} on Poly"}
+
+    # Kalshi Sell
+    k_resp = None
+    if k_qty > 0:
+        # To sell, we need the BID price
+        books = get_yes_no_books_kalshi(info['kalshi_ticker'])
+        side_key = f"{info['kalshi_side']}_asks" # Wait, BID is where we sell. 
+        # Actually our normalize_book_side helper only gets asks by default in some places.
+        raw = books['raw']
+        bid_cents = raw.get(info['kalshi_side'], {}).get('yes_bid' if info['kalshi_side'] == 'yes' else 'no_bid') # Simplified
+        
+        # Better: just use a very low price (1 cent) with IOC/FOK to sell into whatever bids exist
+        k_resp = kalshi_place_limit_order(
+            ticker=info['kalshi_ticker'],
+            side=info['kalshi_side'],
+            action="sell",
+            count=k_qty,
+            price_cents=1, # Sell into any bid
+            time_in_force="immediate_or_cancel"
+        )
+
+    # Poly Sell
+    p_resp = None
+    if p_qty > 0:
+        p_resp = polymarket_place_limit_order(
+            slug=info['polymarket_ticker'],
+            outcome=info['polymarket_side'],
+            size=p_qty,
+            price=0.01, # Sell into any bid
+            side="SELL",
+            order_type="IOC"
+        )
+        
+    return {
+        "status": "success",
+        "kalshi_response": k_resp,
+        "polymarket_response": p_resp,
+        "message": f"Liquidated {k_qty} Kalshi & {p_qty} Poly contracts"
+    }
+
+
+def evaluate_swap_opportunity(
+    candidate_arb: dict,
+    held_positions: dict,
+    total_portfolio_usd: float,
+    min_swap_gain_usd: float = DEFAULT_MIN_SWAP_GAIN_USD,
+    swap_hurdle_apy: float = DEFAULT_SWAP_HURDLE_APY
+) -> Optional[dict]:
+    """
+    Check if we should sell a held position to buy candidate_arb.
+    Returns the pair_id to sell if a swap is advantageous.
+    """
+    candidate_apy = candidate_arb.get('apy', 0.0)
+    
+    # 1. Find the "Weakest Link" (Held pair with lowest remaining APY)
+    worst_pair_id = None
+    worst_apy = 999999.0
+    
+    for pid, info in held_positions.items():
+        if info['value_usd'] < 0.50: # Ignore dust
+            continue
+            
+        h_apy = calculate_holding_apy(info)
+        if h_apy < worst_apy:
+            worst_apy = h_apy
+            worst_pair_id = pid
+            
+    if not worst_pair_id:
+        return None
+    
+    # 2. Check APY Hurdle: New must be at least X% APY better than old
+    if candidate_apy < worst_apy + swap_hurdle_apy:
+        return None
+        
+    # 3. Check Fee/Slippage Adjusted Absolute Gain
+    # Loss on liquidation = current_value * SWAP_FEE_CUSHION_PCT
+    # Expected profit on new = candidate_arb['gross_profit_usd']
+    
+    worst_info = held_positions[worst_pair_id]
+    liquidation_loss = worst_info['value_usd'] * (SWAP_FEE_CUSHION_PCT / 100.0)
+    
+    # Absolute gain improvement
+    net_gain = candidate_arb['gross_profit_usd'] - liquidation_loss
+    
+    if net_gain < min_swap_gain_usd:
+        return None
+        
+    return {
+        "sell_pair_id": worst_pair_id,
+        "sell_value_usd": worst_info['value_usd'],
+        "net_gain_usd": net_gain,
+        "apy_improvement": candidate_apy - worst_apy,
+        "worst_apy": worst_apy
+    }
 
 def top_of_book_arb(levels_a, levels_b, max_trade_usd, fee_buffer_a=0.0, fee_buffer_b=0.0):
     """
@@ -118,6 +363,8 @@ def top_of_book_arb(levels_a, levels_b, max_trade_usd, fee_buffer_a=0.0, fee_buf
         "depth_a_used": 0,
         "depth_b_used": 0,
     }
+
+
 def ensure_parent_dir(filepath: str) -> None:
     parent = os.path.dirname(filepath)
     if parent:
@@ -165,7 +412,7 @@ def get_polymarket_available_usd() -> float:
     return safe_float(get_polymarket_balance(wallet), 0.0)
 
 
-def size_trade_to_available_balances(arb: dict) -> dict:
+def size_trade_to_available_balances(arb: dict, held_positions: Optional[dict] = None) -> dict:
     """
     Shrink contracts so both legs are affordable.
     Assumes both legs are BUY orders.
@@ -464,13 +711,19 @@ def choose_best_arb_for_pair(pair_row: pd.Series) -> dict:
     if not options:
         return {"found": False}
 
-    # Prefer highest weighted executable profit %
+    close_time = normalize_str(pair_row.get("close_time", ""))
+    for opt in options:
+        opt["pair_id"] = pair_id
+        opt["close_time"] = close_time
+        opt["apy"] = calculate_apy(opt["profit_pct"], close_time)
+
+    # Prefer highest weighted executable APY
     best = max(
         options,
         key=lambda x: (
+            x["apy"],
             x["profit_pct"],
             x["gross_profit_usd"],
-            x["contracts"],
         ),
     )
     return best
@@ -529,12 +782,34 @@ def reverify_pair_live(pair_row: pd.Series, original_arb: dict) -> dict:
 # Execution
 # =========================================================
 
-def place_dual_orders(pair_row: pd.Series, arb: dict) -> dict:
+def place_dual_orders(
+    pair_row: pd.Series, 
+    arb: dict, 
+    total_portfolio_usd: float = 0.0,
+    current_pair_value_usd: float = 0.0
+) -> dict:
     """
     Place both legs, but first shrink size to available balances on both venues.
+    Also respects concentration limits.
     """
     kalshi_ticker = normalize_str(pair_row["kalshi_ticker"])
     polymarket_slug = normalize_str(pair_row["polymarket_ticker"])
+
+    # Concentration check
+    max_alloc_pct = DEFAULT_MAX_PORTFOLIO_PCT_PER_PAIR
+    if total_portfolio_usd > 10.0: # Only enforce if portfolio has some weight
+        potential_total = current_pair_value_usd + arb['notional_usd']
+        if potential_total > (total_portfolio_usd * max_alloc_pct):
+            # Recalculate allowed additional notional
+            allowed_additional = max(0.0, (total_portfolio_usd * max_alloc_pct) - current_pair_value_usd)
+            if allowed_additional < 1.0: # Too small
+                 return {"status": "skipped", "message": f"Concentration limit reached: Pair already occupies {current_pair_value_usd/total_portfolio_usd:.1%} of portfolio"}
+            
+            # Shrink arb to allowed_additional
+            shrink_factor = allowed_additional / arb['notional_usd']
+            arb['contracts'] *= shrink_factor
+            arb['notional_usd'] = arb['contracts'] * arb['sum_price']
+            arb['gross_profit_usd'] = arb['contracts'] * (1.0 - arb['sum_price'])
 
     balance_check = size_trade_to_available_balances(arb)
     if not balance_check["ok"]:
@@ -601,13 +876,11 @@ def place_dual_orders(pair_row: pd.Series, arb: dict) -> dict:
 # Pair processing
 # =========================================================
 
-def process_pair(
+def get_candidate_for_pair(
     pair_row: pd.Series,
-    dry_run: bool = True,
     min_profit_pct: float = DEFAULT_MIN_PROFIT_PCT,
     min_liquidity_usd: float = DEFAULT_MIN_LIQUIDITY_USD,
-    reverify_books: bool = DEFAULT_REVERIFY_BOOKS,
-) -> None:
+) -> Optional[dict]:
     pair_id = normalize_str(
         pair_row.get(
             "pair_id",
@@ -617,141 +890,27 @@ def process_pair(
 
     active = truthy(pair_row.get("active", "true"))
     if not active:
-        print(f"[{pair_id}] skipped (inactive)")
-        return
+        return None
 
     try:
         arb = choose_best_arb_for_pair(pair_row)
 
         if not arb.get("found"):
-            print(f"[{pair_id}] no arb found")
-            return
+            return None
 
         if arb["profit_pct"] < min_profit_pct:
-            print(f"[{pair_id}] arb found but below min profit: {arb['profit_pct']:.3f}%")
-            return
+            return None
 
         if arb["notional_usd"] < min_liquidity_usd:
-            print(f"[{pair_id}] arb found but insufficient liquidity: ${arb['notional_usd']:.2f}")
-            return
+            return None
 
-        print(
-            f"[{pair_id}] arb found | "
-            f"Kalshi {arb['kalshi_side'].upper()} @ {arb['price_a']:.4f} + "
-            f"Poly {arb['polymarket_outcome']} @ {arb['price_b']:.4f} = "
-            f"{arb['sum_price']:.4f} | "
-            f"profit {arb['profit_pct']:.3f}% | "
-            f"contracts {arb['contracts']:.4f} | "
-            f"notional ${arb['notional_usd']:.2f} | "
-            f"gross profit ${arb['gross_profit_usd']:.4f}"
-        )
-
-        if reverify_books:
-            live_arb = reverify_pair_live(pair_row, arb)
-
-            if not live_arb.get("found"):
-                msg = "reverification failed: no live executable arb on same side"
-                print(f"[{pair_id}] {msg}")
-                append_execution_log({
-                    "timestamp": utc_now_iso(),
-                    "pair_id": pair_id,
-                    "status": "reverify_failed",
-                    "kalshi_ticker": pair_row["kalshi_ticker"],
-                    "polymarket_ticker": pair_row["polymarket_ticker"],
-                    "kalshi_side": arb["kalshi_side"],
-                    "polymarket_outcome": arb["polymarket_outcome"],
-                    "kalshi_price": arb["price_a"],
-                    "polymarket_price": arb["price_b"],
-                    "sum_price": arb["sum_price"],
-                    "profit_pct": arb["profit_pct"],
-                    "contracts": arb["contracts"],
-                    "notional_usd": arb["notional_usd"],
-                    "gross_profit_usd": arb["gross_profit_usd"],
-                    "message": msg,
-                })
-                return
-
-            if live_arb["profit_pct"] < min_profit_pct:
-                msg = f"reverified arb below min profit: {live_arb['profit_pct']:.3f}%"
-                print(f"[{pair_id}] {msg}")
-                return
-
-            if live_arb["notional_usd"] < min_liquidity_usd:
-                msg = f"reverified arb below min liquidity: ${live_arb['notional_usd']:.2f}"
-                print(f"[{pair_id}] {msg}")
-                return
-
-            arb = live_arb
-            print(
-                f"[{pair_id}] live reverified | "
-                f"Kalshi {arb['kalshi_side'].upper()} @ {arb['price_a']:.4f} + "
-                f"Poly {arb['polymarket_outcome']} @ {arb['price_b']:.4f} = "
-                f"{arb['sum_price']:.4f} | "
-                f"profit {arb['profit_pct']:.3f}% | "
-                f"contracts {arb['contracts']:.4f}"
-            )
-
-        if dry_run:
-            append_execution_log({
-                "timestamp": utc_now_iso(),
-                "pair_id": pair_id,
-                "status": "dry_run_candidate",
-                "kalshi_ticker": pair_row["kalshi_ticker"],
-                "polymarket_ticker": pair_row["polymarket_ticker"],
-                "kalshi_side": arb["kalshi_side"],
-                "polymarket_outcome": arb["polymarket_outcome"],
-                "kalshi_price": arb["price_a"],
-                "polymarket_price": arb["price_b"],
-                "sum_price": arb["sum_price"],
-                "profit_pct": arb["profit_pct"],
-                "contracts": arb["contracts"],
-                "notional_usd": arb["notional_usd"],
-                "gross_profit_usd": arb["gross_profit_usd"],
-                "depth_a_used": arb.get("depth_a_used"),
-                "depth_b_used": arb.get("depth_b_used"),
-                "message": "Candidate found; dry run only",
-            })
-            return
-
-        result = place_dual_orders(pair_row, arb)
-
-        append_execution_log({
-            "timestamp": utc_now_iso(),
-            "pair_id": pair_id,
-            "status": result["status"],
-            "kalshi_ticker": pair_row["kalshi_ticker"],
-            "polymarket_ticker": pair_row["polymarket_ticker"],
-            "kalshi_side": arb["kalshi_side"],
-            "polymarket_outcome": arb["polymarket_outcome"],
-            "kalshi_price": result.get("kalshi_price"),
-            "polymarket_price": result.get("polymarket_price"),
-            "sum_price": result.get("sum_price"),
-            "profit_pct": result.get("profit_pct"),
-            "contracts": result.get("contracts"),
-            "notional_usd": result.get("notional_usd"),
-            "gross_profit_usd": result.get("gross_profit_usd"),
-            "depth_a_used": arb.get("depth_a_used"),
-            "depth_b_used": arb.get("depth_b_used"),
-            "message": result.get("message", ""),
-        })
-
-        print(
-            f"[{pair_id}] EXECUTED | "
-            f"contracts={result.get('contracts')} | "
-            f"sum_price={result.get('sum_price'):.4f} | "
-            f"profit={result.get('profit_pct'):.3f}%"
-        )
+        # Add additional metadata for execution
+        arb["pair_row"] = pair_row
+        return arb
 
     except Exception as e:
-        print(f"[{pair_id}] ERROR: {e}")
-        append_execution_log({
-            "timestamp": utc_now_iso(),
-            "pair_id": pair_id,
-            "status": "error",
-            "kalshi_ticker": pair_row.get("kalshi_ticker", ""),
-            "polymarket_ticker": pair_row.get("polymarket_ticker", ""),
-            "message": str(e),
-        })
+        print(f"[{pair_id}] Error finding candidate: {e}")
+        return None
 
 
 # =========================================================
@@ -771,19 +930,139 @@ def run_once(
     df = pd.read_csv(tracked_pairs_csv)
     print(f"Loaded {len(df)} tracked pairs from {tracked_pairs_csv}")
 
-    required_cols = ["kalshi_ticker", "polymarket_ticker"]
-    missing = [c for c in required_cols if c not in df.columns]
-    if missing:
-        raise ValueError(f"Missing required columns: {missing}")
+    # 1. Fetch current exposure & cash
+    exposure = get_current_exposure(df)
+    total_portfolio_usd = exposure['total_portfolio_usd']
+    
+    # We fetch available cash to see if we can buy without selling
+    kalshi_cash = get_kalshi_available_usd()
+    poly_cash = get_polymarket_available_usd()
+    total_cash = kalshi_cash + poly_cash
+    
+    print(f"ACCOUNT STATE: Kalshi=${kalshi_cash:.2f}, Poly=${poly_cash:.2f} | Positions=${total_portfolio_usd:.2f}")
+    total_nav = total_portfolio_usd + total_cash
 
+    # 2. Collect and rank all candidates
+    candidates = []
     for _, row in df.iterrows():
-        process_pair(
-            pair_row=row,
-            dry_run=dry_run,
-            min_profit_pct=min_profit_pct,
-            min_liquidity_usd=min_liquidity_usd,
-            reverify_books=reverify_books,
+        cand = get_candidate_for_pair(row, min_profit_pct, min_liquidity_usd)
+        if cand:
+            candidates.append(cand)
+            
+    if not candidates:
+        print("No viable arbitrage opportunities found at this time.")
+        return
+
+    # Sort candidates by APY (highest first)
+    candidates.sort(key=lambda x: x['apy'], reverse=True)
+    best_cand = candidates[0]
+    pair_id = best_cand['pair_id']
+    
+    print(f"BEST CANDIDATE: [{pair_id}] Profit={best_cand['profit_pct']:.2f}% | APY={best_cand['apy']:.1f}%")
+
+    # 3. Decision Logic: Buy vs Swap
+    # If we have at least $5 cash on both sides, try to just BUY
+    if kalshi_cash >= 2.5 and poly_cash >= 2.5:
+        print(f"[{pair_id}] Attempting direct BUY...")
+        
+        target_arb = best_cand
+        if reverify_books:
+            live = reverify_pair_live(best_cand['pair_row'], best_cand)
+            if not live.get('found'):
+                print(f"[{pair_id}] Reverification failed. Skipping.")
+                return
+            target_arb = live
+            # Re-calculate APY for live data
+            target_arb['apy'] = calculate_apy(target_arb['profit_pct'], target_arb.get('close_time', ''))
+
+        if dry_run:
+            print(f"[{pair_id}] Dry run: Would place orders.")
+            append_execution_log({
+                "timestamp": utc_now_iso(),
+                "pair_id": pair_id,
+                "status": "dry_run_buy",
+                "apy": target_arb['apy'],
+                "message": "Candidate found for direct buy"
+            })
+            return
+
+        result = place_dual_orders(
+            target_arb['pair_row'], 
+            target_arb,
+            total_portfolio_usd=total_nav,
+            current_pair_value_usd=exposure['pair_exposure'].get(pair_id, {}).get('value_usd', 0.0)
         )
+        
+        append_execution_log({
+            "timestamp": utc_now_iso(),
+            "pair_id": pair_id,
+            "status": result["status"],
+            "kalshi_ticker": target_arb["kalshi_ticker"],
+            "polymarket_ticker": target_arb["polymarket_ticker"],
+            "kalshi_side": target_arb["kalshi_side"],
+            "polymarket_outcome": target_arb["polymarket_outcome"],
+            "kalshi_price": result.get("kalshi_price"),
+            "polymarket_price": result.get("polymarket_price"),
+            "profit_pct": result.get("profit_pct"),
+            "apy": target_arb['apy'],
+            "contracts": result.get("contracts"),
+            "message": f"Direct buy: {result.get('message', '')}",
+        })
+        return
+
+    # 4. Swap Evaluation
+    print("Low cash - evaluating for advantageous swaps...")
+    swap = evaluate_swap_opportunity(best_cand, exposure['pair_exposure'], total_nav)
+    
+    if swap:
+        sell_id = swap['sell_pair_id']
+        msg = f"SWAP: Sell {sell_id} ({swap['worst_apy']:.1f}% APY) -> Buy {pair_id} ({best_cand['apy']:.1f}% APY) | Net Gain: ${swap['net_gain_usd']:.2f}"
+        print(msg)
+        
+        if dry_run:
+            append_execution_log({
+                "timestamp": utc_now_iso(),
+                "pair_id": pair_id,
+                "status": "dry_run_swap",
+                "message": msg
+            })
+            return
+
+        # 4a. Liquidate
+        sell_res = liquidate_pair(sell_id, exposure['pair_exposure'], dry_run=False)
+        print(f"Liquidation result: {sell_res['message']}")
+        
+        if sell_res['status'] != 'success':
+            print("Liquidation failed. Aborting swap.")
+            return
+            
+        # 4b. Re-verify buy leg after liquidation
+        # Note: Balance might take seconds to update, but most exchange balances update instantly upon fill
+        target_arb = best_cand
+        if reverify_books:
+            live = reverify_pair_live(best_cand['pair_row'], best_cand)
+            if not live.get('found'):
+                print(f"[{pair_id}] Post-liquidation reverify failed.")
+                return
+            target_arb = live
+
+        # 4c. Execute Buy
+        result = place_dual_orders(
+            target_arb['pair_row'], 
+            target_arb,
+            total_portfolio_usd=total_nav,
+            current_pair_value_usd=0.0 # Just liquidated or starting fresh
+        )
+        
+        append_execution_log({
+            "timestamp": utc_now_iso(),
+            "pair_id": pair_id,
+            "status": f"swap_{result['status']}",
+            "message": f"Swap from {sell_id} | {result.get('message', '')}",
+            "apy": target_arb.get('apy')
+        })
+    else:
+        print("No advantageous swaps found (or cash too low and no swap hurdle cleared).")
 
 
 def main():
