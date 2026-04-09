@@ -37,8 +37,8 @@ DEFAULT_TRACKED_PAIRS_CSV = os.path.join(PROJECT_ROOT, "Data", "tracked_pairs.cs
 EXECUTION_LOG_CSV = os.path.join(PROJECT_ROOT, "Data", "portfolio_exit_execution_log.csv")
 
 DEFAULT_MIN_CONTRACTS_SELL = 5
-DEFAULT_MAX_CONTRACTS_SELL = 6
-DEFAULT_CUTOFF_CENTS = 0.99
+DEFAULT_MAX_CONTRACTS_SELL = 20
+DEFAULT_CUTOFF_CENTS = 0.9995
 DEFAULT_SLEEP_MINUTES = 30
 
 # =========================================================
