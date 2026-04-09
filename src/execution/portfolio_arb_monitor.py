@@ -54,7 +54,7 @@ from execution.polymarket_trade import place_limit_order as polymarket_place_lim
 TRACKED_PAIRS_CSV = os.path.join(PROJECT_ROOT, "Data", "tracked_pairs.csv")
 EXECUTION_LOG_CSV = os.path.join(PROJECT_ROOT, "Data", "portfolio_arb_execution_log.csv")
 
-DEFAULT_MAX_TRADE_USD = 20.0
+DEFAULT_MAX_TRADE_USD = 20.0 # <<< should probably be increased.
 DEFAULT_MIN_PROFIT_PCT = 8.0
 DEFAULT_MIN_LIQUIDITY_USD = 5.0
 DEFAULT_SLEEP_MINUTES = 30
@@ -68,8 +68,8 @@ DEFAULT_REVERIFY_BOOKS = True
 
 # Performance & Swap Configuration
 DEFAULT_SWAP_HURDLE_APY = 15.0      # Only swap if new APY is 15% better
-DEFAULT_MIN_SWAP_GAIN_USD = 1.00    # Absolute minimum expected profit gain to swap
-DEFAULT_MAX_PORTFOLIO_PCT_PER_PAIR = 0.20 # 20% limit per pair for diversification
+DEFAULT_MIN_SWAP_GAIN_USD = 0.05    # Marginal safety floor
+DEFAULT_MAX_PORTFOLIO_PCT_PER_PAIR = 0.50 # 50% limit per pair for diversification
 SWAP_FEE_CUSHION_PCT = 1.0         # 1% buffer for fees/slippage when calculating swap feasibility
 
 # =========================================================
@@ -144,8 +144,10 @@ def get_current_exposure(tracked_pairs_df: pd.DataFrame) -> dict:
             "pair_id": pid,
             "contracts_kalshi": 0,
             "kalshi_side": "",
+            "avg_price_kalshi": 0.0,
             "contracts_poly": 0,
             "polymarket_side": "",
+            "avg_price_poly": 0.0,
             "value_usd": 0.0,
             "kalshi_ticker": kt,
             "polymarket_ticker": pt,
@@ -158,7 +160,8 @@ def get_current_exposure(tracked_pairs_df: pd.DataFrame) -> dict:
         if tic in k_to_pair:
             pid = k_to_pair[tic]
             exposure[pid]["contracts_kalshi"] += pos['quantity']
-            exposure[pid]["kalshi_side"] = pos['side'].lower() # yes/no
+            exposure[pid]["kalshi_side"] = pos['side'].lower()
+            exposure[pid]["avg_price_kalshi"] = safe_float(pos.get('avg_price_cents', 0)) / 100.0
             val = safe_float(pos.get('market_exposure_cents', 0)) / 100.0
             exposure[pid]["value_usd"] += val
             total_val += val
@@ -168,7 +171,8 @@ def get_current_exposure(tracked_pairs_df: pd.DataFrame) -> dict:
         if tic in p_to_pair:
             pid = p_to_pair[tic]
             exposure[pid]["contracts_poly"] += pos['size']
-            exposure[pid]["polymarket_side"] = pos['side'].upper() # YES/NO
+            exposure[pid]["polymarket_side"] = pos['side'].upper()
+            exposure[pid]["avg_price_poly"] = safe_float(pos.get('avg_price', 0))
             val = safe_float(pos.get('current_value', 0))
             exposure[pid]["value_usd"] += val
             total_val += val
@@ -275,7 +279,22 @@ def evaluate_swap_opportunity(
         if info['value_usd'] < 0.50: # Ignore dust
             continue
             
+        # DEFENSIVE CHECK: Never sell at a loss
+        # Use a tiny buffer of 0.005 (half a cent) to ensure we clear the cost floor
+        sum_entry_cost = (info['avg_price_kalshi'] + info['avg_price_poly']) + 0.005
+        current_unit_value = info['value_usd'] / max(info['contracts_kalshi'], info['contracts_poly'], 1e-12)
+        
+        if current_unit_value < sum_entry_cost:
+            # This is currently at a loss or even — skip liquidation to be safe
+            continue
+
         h_apy = calculate_holding_apy(info)
+        
+        # PRIORITY LOCK: If a position is > 0.98, it's a high-priority liquidation target
+        # because the remaining yield is tiny and capital is locked.
+        if current_unit_value >= 0.98:
+            h_apy = -1.0 # Force as worst possible APY to prioritize clearing it
+            
         if h_apy < worst_apy:
             worst_apy = h_apy
             worst_pair_id = pid
