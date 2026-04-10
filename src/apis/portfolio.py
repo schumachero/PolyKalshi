@@ -55,8 +55,17 @@ _KALSHI_RSA_KEY_STR = os.getenv("KALSHI_RSA_PRIVATE_KEY")
 _priv_key = None
 
 if _KALSHI_RSA_KEY_STR and _CRYPTO_AVAILABLE:
+    _pem = _KALSHI_RSA_KEY_STR.strip()
+    header = "-----BEGIN RSA PRIVATE KEY-----"
+    footer = "-----END RSA PRIVATE KEY-----"
+    
+    if header in _pem and footer in _pem:
+        content = _pem.replace(header, "").replace(footer, "").replace("\\n", "").replace("\n", "").replace(" ", "")
+        _pem = f"{header}\n{content}\n{footer}"
+    else:
+        _pem = _pem.replace("\\n", "\n")
+
     try:
-        _pem = _KALSHI_RSA_KEY_STR.replace("\\n", "\n")
         _priv_key = serialization.load_pem_private_key(
             _pem.encode(), password=None, backend=default_backend()
         )
