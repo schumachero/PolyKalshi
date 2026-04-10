@@ -19,12 +19,31 @@ KALSHI_RSA_PRIVATE_KEY = os.getenv("KALSHI_RSA_PRIVATE_KEY")
 
 _priv_key = None
 if KALSHI_RSA_PRIVATE_KEY:
-    pem = KALSHI_RSA_PRIVATE_KEY.replace("\\n", "\n")
-    _priv_key = serialization.load_pem_private_key(
-        pem.encode(),
-        password=None,
-        backend=default_backend(),
-    )
+    # 1. Handle various ways the key might be mangled in .env
+    pem = KALSHI_RSA_PRIVATE_KEY.strip()
+    
+    header = "-----BEGIN RSA PRIVATE KEY-----"
+    footer = "-----END RSA PRIVATE KEY-----"
+    
+    # If the key is one long string with header/footer stuck to the data, fix it
+    if header in pem and footer in pem:
+        # Extract everything between header and footer, remove messy chars
+        content = pem.replace(header, "").replace(footer, "").replace("\\n", "").replace("\n", "").replace(" ", "")
+        # Reconstruct standard PEM format
+        pem = f"{header}\n{content}\n{footer}"
+    else:
+        # Fallback to basic newline replacement
+        pem = pem.replace("\\n", "\n")
+    
+    try:
+        _priv_key = serialization.load_pem_private_key(
+            pem.encode(),
+            password=None,
+            backend=default_backend(),
+        )
+    except Exception as e:
+        print(f"[Kalshi Auth] Warning: Could not load RSA key: {e}")
+        _priv_key = None
 
 
 def _auth_headers(method: str, path: str) -> dict:
