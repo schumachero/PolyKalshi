@@ -28,6 +28,7 @@ from apis.orderbook import get_matched_orderbooks
 
 from execution.kalshi_trade import place_limit_order as kalshi_place_limit_order
 from execution.polymarket_trade import place_limit_order as polymarket_place_limit_order
+from arbitrage_calculator import get_polymarket_fee_category, calculate_polymarket_fee
 
 # =========================================================
 # Configuration
@@ -178,10 +179,20 @@ def process_portfolio_exits(
         p_bid_price = safe_float(p_bids[0]["price"])
         p_bid_vol = safe_float(p_bids[0]["volume"])
         
-        sum_bid_price = k_bid_price + p_bid_price
+        # Calculate fee-adjusted Net Bids (we receive less when hitting a bid)
+        k_fee_dollar = 0.07 * k_bid_price * (1.0 - k_bid_price) if k_bid_price > 0.0 else 0.0
+        k_bid_net = k_bid_price - k_fee_dollar
         
-        if sum_bid_price < cutoff_cents:
-            print(f"[{pair_id}] Skipped: Combined bid {sum_bid_price:.4f} below cutoff {cutoff_cents:.4f}")
+        p_title = normalize_str(live_p.get("title", ""))
+        pm_category = get_polymarket_fee_category(p_title, "")
+        p_fee_dollar = calculate_polymarket_fee(p_bid_price, pm_category)
+        p_bid_net = p_bid_price - p_fee_dollar
+        
+        sum_bid_price = k_bid_price + p_bid_price
+        sum_net_bid_price = k_bid_net + p_bid_net
+        
+        if sum_net_bid_price < cutoff_cents:
+            print(f"[{pair_id}] Skipped: Combined NET bid {sum_net_bid_price:.4f} (Raw: {sum_bid_price:.4f}) below cutoff {cutoff_cents:.4f}")
             continue
             
         # Calculate exactly how many we can sell simultaneously
@@ -199,20 +210,20 @@ def process_portfolio_exits(
             
         print(
             f"\n[{pair_id}] EXIT TARGET HIT | "
-            f"Kalshi {pair['k_side'].upper()} BID @ {k_bid_price:.4f} + "
-            f"Poly {pair['p_side'].upper()} BID @ {p_bid_price:.4f} = "
-            f"{sum_bid_price:.4f} | Size: {executable_contracts}"
+            f"Kalshi {pair['k_side'].upper()} BID @ {k_bid_price:.4f} (Net: {k_bid_net:.4f}) + "
+            f"Poly {pair['p_side'].upper()} BID @ {p_bid_price:.4f} (Net: {p_bid_net:.4f}) = "
+            f"{sum_bid_price:.4f} RAW / {sum_net_bid_price:.4f} NET | Size: {executable_contracts}"
         )
         
         kalshi_price_cents = int(round(k_bid_price * 100))
         polymarket_price = round(p_bid_price, 6)
         
         if not (1 <= kalshi_price_cents <= 99):
-            print(f"[{pair_id}] Skipped: Kalshi price {kalshi_price_cents} out of 1-99 bounds")
+            print(f"[{pair_id}] Skipped: Kalshi raw price {kalshi_price_cents} out of 1-99 bounds")
             continue
             
         if not (0 < polymarket_price < 1):
-            print(f"[{pair_id}] Skipped: Polymarket price {polymarket_price:.4f} out of 0-1 bounds")
+            print(f"[{pair_id}] Skipped: Polymarket raw price {polymarket_price:.4f} out of 0-1 bounds")
             continue
         
         if dry_run:
