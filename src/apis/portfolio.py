@@ -261,22 +261,31 @@ def get_polymarket_positions(wallet_address: str = None) -> list[dict]:
     while True:
         try:
             url = f"{POLYMARKET_DATA_API}/positions"
-            r = requests.get(
-                url,
-                params={
-                    "user": addr, 
-                    "sizeThreshold": "0.01",
-                    "limit": limit,
-                    "offset": offset
-                },
-                timeout=REQUEST_TIMEOUT,
-            )
+            params = {
+                "user": addr, 
+                "sizeThreshold": "0.01",
+                "limit": limit,
+                "offset": offset
+            }
+            r = requests.get(url, params=params, timeout=REQUEST_TIMEOUT)
+            
+            if r.status_code == 429:
+                print(f"[portfolio] Polymarket Rate Limit (429)! Skipping... {r.text[:100]}")
+                return None # Return None to indicate ERROR, not empty
+                
             r.raise_for_status()
             raw = r.json()
+        except requests.exceptions.Timeout:
+            print(f"[portfolio] Polymarket API Timeout (> {REQUEST_TIMEOUT}s) for user {addr}")
+            return None
         except Exception as e:
-            print(f"[portfolio] Polymarket positions error: {e}")
-            break
+            print(f"[portfolio] Polymarket API error for user {addr}: {e}")
+            return None
 
+        if not raw and offset == 0:
+            # Genuinely empty portfolio
+            return []
+            
         if not raw:
             break
 

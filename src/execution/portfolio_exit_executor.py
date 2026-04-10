@@ -130,8 +130,11 @@ def process_portfolio_exits(
     if not live_k_pos:
         print("Could not fetch Kalshi positions or none exist.")
         return
-    if not live_p_pos:
-        print("Could not fetch Polymarket positions or none exist.")
+    if live_p_pos is None:
+        print("ERROR: Failed to fetch Polymarket positions (see logs above). Skipping this cycle.")
+        return
+    if len(live_p_pos) == 0:
+        print("Polymarket portfolio is empty. Nothing to exit.")
         return
 
     for pair in paired:
