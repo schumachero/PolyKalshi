@@ -1,6 +1,6 @@
 # Event Lifecycle Guide
 
-This guide explains how the `portfolio_arb_monitor` treats each specific event it encounters during a loop.
+This guide explains how the modular arbitrage system treats each specific event it encounters. Events are now processed in discrete phases (**Hanging Leg** -> **Maturity** -> **Buy** -> **Swap**) that can be run together or independently.
 
 ## 1. The Arb Discovery Event
 1. **Fetch**: Books for all tracked pairs are pulled concurrently.

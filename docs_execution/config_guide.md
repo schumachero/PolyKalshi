@@ -1,6 +1,6 @@
 # Configuration Parameter Guide
 
-This document explains the impact of every configuration constant in `portfolio_arb_monitor.py`.
+This document explains the impact of every configuration constant in `arb_base.py`.
 
 ## Core Hurdles
 - `DEFAULT_MIN_PROFIT_PCT` (1.5): The minimum gross yield required to even consider a trade.
