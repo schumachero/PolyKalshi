@@ -75,7 +75,7 @@ def get_kalshi_orderbook(market_ticker, levels=DEFAULT_LEVELS):
         data = r.json()
     except Exception as e:
         print(f"Error fetching Kalshi orderbook for {market_ticker}: {e}")
-        return {"yes": {"bids": [], "asks": []}, "no": {"bids": [], "asks": []}}
+        return None
 
     book_info = data.get("orderbook_fp") or data.get("orderbook", {})
 
@@ -140,7 +140,7 @@ def fetch_polymarket_market_exact(market_slug_or_id: str):
 def get_polymarket_orderbook(market_ticker, levels=DEFAULT_LEVELS):
     if pd.isna(market_ticker):
         print("Error: Polymarket market ticker is missing.")
-        return {"yes": {"bids": [], "asks": []}, "no": {"bids": [], "asks": []}}
+        return None
 
     if isinstance(market_ticker, float) and market_ticker.is_integer():
         market_ticker = str(int(market_ticker))
@@ -151,9 +151,10 @@ def get_polymarket_orderbook(market_ticker, levels=DEFAULT_LEVELS):
         market_data = fetch_polymarket_market_exact(market_ticker)
     except Exception as e:
         print(f"Error fetching exact Polymarket market {market_ticker}: {e}")
-        return {"yes": {"bids": [], "asks": []}, "no": {"bids": [], "asks": []}}
+        return None
 
     # Helpful debug
+    
     #print(
     #    "POLY DEBUG | "
     #    f"requested={market_ticker} | "
@@ -195,7 +196,7 @@ def get_polymarket_orderbook(market_ticker, levels=DEFAULT_LEVELS):
             data = r.json()
         except Exception as e:
             print(f"Error fetching Polymarket CLOB for token {token_id}: {e}")
-            return {"bids": [], "asks": []}
+            return None
 
         def parse_array(arr, is_bid):
             parsed = []
@@ -218,9 +219,16 @@ def get_polymarket_orderbook(market_ticker, levels=DEFAULT_LEVELS):
     with concurrent.futures.ThreadPoolExecutor(max_workers=THREAD_POOL_WORKERS) as executor:
         yes_future = executor.submit(fetch_clob_book, yes_token)
         no_future = executor.submit(fetch_clob_book, no_token)
+        
+        yes_res = yes_future.result()
+        no_res = no_future.result()
+        
+        if yes_res is None or no_res is None:
+             return None
+             
         return {
-            "yes": yes_future.result(),
-            "no": no_future.result(),
+            "yes": yes_res,
+            "no": no_res,
         }
     
     
