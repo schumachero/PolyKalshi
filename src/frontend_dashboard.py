@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 import os
 import sys
 import textwrap
@@ -634,13 +635,21 @@ def main():
                 h_df['Timestamp'] = pd.to_datetime(h_df['Timestamp'])
                 h_df = h_df.sort_values('Timestamp')
                 
-                # --- SMART APR (Share Price Method) ---
-                if len(h_df) >= 2 and "Total_Units" in h_df.columns:
+                # --- CALCULATE GROWTH ---
+                if "Total_Units" in h_df.columns:
                     h_df['Price'] = h_df['Total_Value_USD'] / h_df['Total_Units']
-                    
+                    initial_price = h_df.iloc[0]['Price']
+                    if initial_price > 0:
+                        h_df['Growth_Pct'] = (h_df['Price'] / initial_price - 1) * 100
+                    else:
+                        h_df['Growth_Pct'] = 0.0
+                else:
+                    h_df['Growth_Pct'] = 0.0
+
+                # --- SMART APR ---
+                if len(h_df) >= 2 and "Total_Units" in h_df.columns:
                     first_row = h_df.iloc[0]
                     last_row = h_df.iloc[-1]
-                    
                     time_diff = (last_row['Timestamp'] - first_row['Timestamp']).total_seconds()
                     days_diff = time_diff / (24 * 3600)
                     
@@ -648,41 +657,55 @@ def main():
                     price_last = last_row['Price']
                     
                     if days_diff > 0.01 and price_start > 0:
-                        # Return based on Share Price growth (Time-Weighted Return)
                         total_return = (price_last / price_start) - 1
                         apr = (total_return * 365 / days_diff) * 100
-                        
                         hist_col1, hist_col2 = st.columns([3, 1])
                         with hist_col1:
-                            st.subheader("Portfolio Value History")
+                            st.subheader("Performance History")
                         with hist_col2:
                             st.metric("Projected APR", f"{apr:+.1f}%", help="Annualized return based on history trajectory")
                     else:
-                        st.subheader("Portfolio Value History")
+                        st.subheader("Performance History")
                 else:
-                    st.subheader("Portfolio Value History")
+                    st.subheader("Performance History")
 
-                # Create a premium area chart
-                fig_hist = px.area(
-                    h_df, 
-                    x='Timestamp', 
-                    y='Total_Value_USD',
-                    template="plotly_dark",
-                    labels={'Total_Value_USD': 'Value ($)', 'Timestamp': 'Time'}
+                # --- DUAL AXIS GRAPH ---
+                fig_hist = make_subplots(specs=[[{"secondary_y": True}]])
+
+                # Trace 1: Value USD (Left)
+                fig_hist.add_trace(
+                    go.Scatter(
+                        x=h_df['Timestamp'], 
+                        y=h_df['Total_Value_USD'],
+                        name="Value ($)",
+                        mode='lines',
+                        fill='tozeroy',
+                        line=dict(width=3, color='#00e676'),
+                        fillcolor='rgba(0, 230, 118, 0.15)',
+                        hovertemplate="<b>Value:</b> $%{y:,.2f}<br>"
+                    ),
+                    secondary_y=False,
                 )
-                
-                # Enhance aesthetics
-                fig_hist.update_traces(
-                    line_color='#00e676', # Vibrant emerald
-                    fillcolor='rgba(0, 230, 118, 0.15)',
-                    line_width=3,
-                    hovertemplate="<b>Value:</b> $%{y:,.2f}<br><b>Time:</b> %{x|%Y-%m-%d %H:%M}"
+
+                # Trace 2: Growth % (Right)
+                fig_hist.add_trace(
+                    go.Scatter(
+                        x=h_df['Timestamp'], 
+                        y=h_df['Growth_Pct'],
+                        name="Growth (%)",
+                        mode='lines',
+                        line=dict(width=3, color='#facc15'), # Vibrant Yellow
+                        hovertemplate="<b>Growth:</b> %{y:+.2f}%<br>"
+                    ),
+                    secondary_y=True,
                 )
-                
+
                 fig_hist.update_layout(
+                    template="plotly_dark",
                     height=450,
                     margin=dict(l=40, r=40, t=20, b=40),
                     hovermode="x unified",
+                    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
                     xaxis=dict(
                         showgrid=False,
                         rangeselector=dict(
@@ -695,18 +718,31 @@ def main():
                             bgcolor="rgba(30, 41, 59, 0.8)",
                             font=dict(color="#f8fafc")
                         )
-                    ),
-                    yaxis=dict(
-                        showgrid=True, 
-                        gridcolor="rgba(255,255,255,0.05)",
-                        tickprefix="$",
-                        tickformat=",."
                     )
                 )
+
+                # Left Y-Axis
+                fig_hist.update_yaxes(
+                    title_text="Portfolio Value ($)", 
+                    secondary_y=False, 
+                    showgrid=True, 
+                    gridcolor="rgba(255,255,255,0.05)",
+                    tickprefix="$",
+                    tickformat=",."
+                )
                 
+                # Right Y-Axis
+                fig_hist.update_yaxes(
+                    title_text="Growth (%)", 
+                    secondary_y=True, 
+                    showgrid=False,
+                    ticksuffix="%",
+                    tickformat=".1f"
+                )
+
                 st.plotly_chart(fig_hist, use_container_width=True)
             else:
-                st.subheader("📊 Portfolio Value History")
+                st.subheader("📊 Performance History")
                 st.info("Portfolio history is currently empty. Logging will begin automatically.")
         except Exception as e_hist:
             st.error(f"Error loading history: {e_hist}")
