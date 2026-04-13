@@ -44,16 +44,20 @@ def parse_urls(kalshi_url, poly_url):
         if poly_match:
              poly_slug = poly_match.group(1).split('?')[0]
     
-    # Kalshi URL format: https://kalshi.com/markets/[series_ticker]/.../[market_ticker]
+    # Kalshi URL format: https://kalshi.com/markets/.../?marketTicker=KXBILLS-FISA
     kalshi_ticker = None
-    kalshi_match = re.search(r'kalshi\.com/markets/[^/]+/[^/]+/([^/?]+)', kalshi_url)
-    if kalshi_match:
-        kalshi_ticker = kalshi_match.group(1).upper()
+    query_match = re.search(r'[?&]marketTicker=([^&]+)', kalshi_url)
+    if query_match:
+        kalshi_ticker = query_match.group(1).upper()
     else:
-        # sometimes it is just kalshi.com/markets/[ticker]
-        kalshi_match = re.search(r'kalshi\.com/markets/([^/?]+)', kalshi_url)
+        # Fallback to path extraction
+        kalshi_match = re.search(r'kalshi\.com/markets/[^/]+/[^/]+/([^/?]+)', kalshi_url)
         if kalshi_match:
             kalshi_ticker = kalshi_match.group(1).upper()
+        else:
+            kalshi_match = re.search(r'kalshi\.com/markets/([^/?]+)', kalshi_url)
+            if kalshi_match:
+                kalshi_ticker = kalshi_match.group(1).upper()
 
     return kalshi_ticker, poly_slug
 
