@@ -226,6 +226,7 @@ def get_polymarket_market_details(market_id_or_slug: str) -> dict:
             return {}
         m = data[0] if isinstance(data, list) else data
         return {
+            "id": str(m.get("id", "")),
             "title": m.get("question", m.get("title", "")),
             "rules": (m.get("description", "") + "\nRules: " + (m.get("rules") or "")).strip()
         }
@@ -303,6 +304,7 @@ def get_polymarket_positions(wallet_address: str = None) -> list[dict]:
             positions.append({
                 "market_id":     slug,
                 "condition_id":  pos.get("conditionId", ""),
+                "numeric_id":    details.get("id", ""),
                 "title":         details.get("title", pos.get("title", "")),
                 "rules":         details.get("rules", ""),
                 "side":          "YES" if outcome.lower() in ("yes", "1", "true") else "NO",

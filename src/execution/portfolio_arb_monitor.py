@@ -44,8 +44,8 @@ from execution.polymarket_trade import place_limit_order as polymarket_place_lim
 TRACKED_PAIRS_CSV = os.path.join(PROJECT_ROOT, "Data", "tracked_pairs.csv")
 EXECUTION_LOG_CSV = os.path.join(PROJECT_ROOT, "Data", "portfolio_arb_execution_log.csv")
 
-DEFAULT_MAX_TRADE_USD = 20.0
-DEFAULT_MIN_PROFIT_PCT = 8.0
+DEFAULT_MAX_TRADE_USD = 20.0 
+DEFAULT_MIN_PROFIT_PCT = 8
 DEFAULT_MIN_LIQUIDITY_USD = 5.0
 DEFAULT_SLEEP_MINUTES = 30
 
@@ -410,10 +410,8 @@ def choose_best_arb_for_pair(pair_row: pd.Series) -> dict:
     kalshi_ticker = normalize_str(pair_row["kalshi_ticker"])
     polymarket_slug = normalize_str(pair_row["polymarket_ticker"])
 
-    max_trade_usd = safe_float(
-        pair_row.get("max_position_per_pair_usd", DEFAULT_MAX_TRADE_USD),
-        DEFAULT_MAX_TRADE_USD,
-    )
+    csv_limit = safe_float(pair_row.get("max_position_per_pair_usd"), 999999)
+    max_trade_usd = min(csv_limit, DEFAULT_MAX_TRADE_USD)
 
     kalshi_books = get_yes_no_books_kalshi(kalshi_ticker)
     poly_no = get_outcome_books_polymarket(polymarket_slug, "NO")
@@ -488,10 +486,8 @@ def reverify_pair_live(pair_row: pd.Series, original_arb: dict) -> dict:
     kalshi_ticker = normalize_str(pair_row["kalshi_ticker"])
     polymarket_slug = normalize_str(pair_row["polymarket_ticker"])
 
-    max_trade_usd = safe_float(
-        pair_row.get("max_position_per_pair_usd", DEFAULT_MAX_TRADE_USD),
-        DEFAULT_MAX_TRADE_USD,
-    )
+    csv_limit = safe_float(pair_row.get("max_position_per_pair_usd"), 999999)
+    max_trade_usd = min(csv_limit, DEFAULT_MAX_TRADE_USD)
 
     kalshi_books = get_yes_no_books_kalshi(kalshi_ticker)
 
