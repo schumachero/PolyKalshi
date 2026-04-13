@@ -1,0 +1,77 @@
+{
+    "investors": {
+        "Arvid Hedin": {
+            "shares": 6000.0,
+            "total_invested": 6000.0,
+            "total_withdrawn": 0.0
+        },
+        "Arvid Axelsson": {
+            "shares": 6000.0,
+            "total_invested": 6000.0,
+            "total_withdrawn": 0.0
+        },
+        "David Hallkvist": {
+            "shares": 6000.0,
+            "total_invested": 6000.0,
+            "total_withdrawn": 0.0
+        },
+        "Elis Graipe": {
+            "shares": 6000.0,
+            "total_invested": 6000.0,
+            "total_withdrawn": 0.0
+        },
+        "Erik Schaine": {
+            "shares": 6000.0,
+            "total_invested": 6000.0,
+            "total_withdrawn": 0.0
+        }
+    },
+    "total_shares": 30000.0,
+    "history": [
+        {
+            "timestamp": "2026-04-13T15:05:42.324664",
+            "type": "BUY",
+            "investor": "Arvid Hedin",
+            "amount": 6000.0,
+            "shares": 6000.0,
+            "price_per_share": 1.0,
+            "portfolio_value_before": 0.0
+        },
+        {
+            "timestamp": "2026-04-13T15:06:16.592700",
+            "type": "BUY",
+            "investor": "Arvid Axelsson",
+            "amount": 6000.0,
+            "shares": 6000.0,
+            "price_per_share": 1.0,
+            "portfolio_value_before": 6000.0
+        },
+        {
+            "timestamp": "2026-04-13T15:06:37.178444",
+            "type": "BUY",
+            "investor": "David Hallkvist",
+            "amount": 6000.0,
+            "shares": 6000.0,
+            "price_per_share": 1.0,
+            "portfolio_value_before": 12000.0
+        },
+        {
+            "timestamp": "2026-04-13T15:06:59.881897",
+            "type": "BUY",
+            "investor": "Elis Graipe",
+            "amount": 6000.0,
+            "shares": 6000.0,
+            "price_per_share": 1.0,
+            "portfolio_value_before": 18000.0
+        },
+        {
+            "timestamp": "2026-04-13T15:07:28.277699",
+            "type": "BUY",
+            "investor": "Erik Schaine",
+            "amount": 6000.0,
+            "shares": 6000.0,
+            "price_per_share": 1.0,
+            "portfolio_value_before": 24000.0
+        }
+    ]
+}
