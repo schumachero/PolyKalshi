@@ -10,6 +10,7 @@ import arb_hanging_leg
 import arb_sell
 import arb_buy
 import arb_swap
+from datetime import datetime
 
 def run_once(df: pd.DataFrame, dry_run: bool = True, min_profit_pct: float = DEFAULT_MIN_PROFIT_PCT, min_liquidity_usd: float = DEFAULT_MIN_LIQUIDITY_USD, reverify: bool = DEFAULT_REVERIFY_BOOKS, verbose: bool = False, enabled_phases: list = None):
     state = MarketState(df)
@@ -81,7 +82,8 @@ def main():
         
         elapsed = time.time() - start
         sleep_sec = max(interval_seconds - elapsed, 0)
-        print(f"Done in {elapsed:.1f}s. Sleeping {sleep_sec/60:.2f}m...")
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        print(f"[{now}] Done in {elapsed:.1f}s. Sleeping {sleep_sec/60:.2f}m ...")
         try:
             time.sleep(sleep_sec)
         except KeyboardInterrupt:

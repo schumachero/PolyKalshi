@@ -5,7 +5,7 @@ import pandas as pd
 from arb_base import (
     MarketState, TRACKED_PAIRS_CSV, utc_now_iso, append_execution_log,
     get_yes_no_books_kalshi, get_outcome_books_polymarket,
-    liquidate_pair, send_telegram_message
+    liquidate_pair, send_telegram_message, THRESHOLD_SELL
 )
 
 def check_and_exit_matured_positions(state: MarketState, dry_run: bool = True) -> list:
