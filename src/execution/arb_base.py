@@ -55,8 +55,8 @@ TRACKED_PAIRS_CSV = os.path.join(PROJECT_ROOT, "Data", "tracked_pairs.csv")
 EXECUTION_LOG_CSV = os.path.join(PROJECT_ROOT, "Data", "portfolio_arb_execution_log.csv")
 LOCKS_DIR = os.path.join(PROJECT_ROOT, "Data", "locks")
 
-DEFAULT_MAX_TRADE_USD = 20.0 
-DEFAULT_MIN_PROFIT_PCT = 8.0
+DEFAULT_MAX_TRADE_USD = 10.0 
+DEFAULT_MIN_PROFIT_PCT = 5.9
 DEFAULT_MIN_LIQUIDITY_USD = 5.0
 DEFAULT_SLEEP_MINUTES = 30
 
@@ -146,14 +146,23 @@ def append_execution_log(row: dict) -> None:
     
     # Atomic file append using a simple lock
     lock_path = EXECUTION_LOG_CSV + ".lock"
-    import fcntl
     try:
-        with open(lock_path, "w") as lock_f:
-            fcntl.flock(lock_f, fcntl.LOCK_EX)
-            df.to_csv(EXECUTION_LOG_CSV, mode="a", header=write_header, index=False)
-            fcntl.flock(lock_f, fcntl.LOCK_UN)
-    except Exception as e:
-        print(f"Log lock error: {e}. Attempting direct write.")
+        if sys.platform == 'win32':
+            import msvcrt
+            with open(lock_path, "w") as lock_f:
+                # Basic lock on Windows
+                msvcrt.locking(lock_f.fileno(), msvcrt.LK_LOCK, 1)
+                df.to_csv(EXECUTION_LOG_CSV, mode="a", header=write_header, index=False)
+                msvcrt.locking(lock_f.fileno(), msvcrt.LK_UNLCK, 1)
+        else:
+            import fcntl
+            with open(lock_path, "w") as lock_f:
+                # Basic lock on Unix
+                fcntl.flock(lock_f, fcntl.LOCK_EX)
+                df.to_csv(EXECUTION_LOG_CSV, mode="a", header=write_header, index=False)
+                fcntl.flock(lock_f, fcntl.LOCK_UN)
+    except Exception:
+        # Fallback to direct write if locking fails or modules are missing
         df.to_csv(EXECUTION_LOG_CSV, mode="a", header=write_header, index=False)
 
 # =========================================================
