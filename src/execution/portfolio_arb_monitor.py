@@ -45,8 +45,8 @@ TRACKED_PAIRS_CSV = os.path.join(PROJECT_ROOT, "Data", "tracked_pairs.csv")
 EXECUTION_LOG_CSV = os.path.join(PROJECT_ROOT, "Data", "portfolio_arb_execution_log.csv")
 
 DEFAULT_MAX_TRADE_USD = 20.0 
-DEFAULT_MIN_PROFIT_PCT = 8
-DEFAULT_MIN_LIQUIDITY_USD = 5.0
+DEFAULT_MIN_PROFIT_PCT = 7.5
+DEFAULT_MIN_LIQUIDITY_USD = 4.0
 DEFAULT_SLEEP_MINUTES = 30
 
 # Fee cushions can be used as conservative safety margins
