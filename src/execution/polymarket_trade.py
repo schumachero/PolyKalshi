@@ -36,12 +36,19 @@ def build_client() -> ClobClient:
     return client
 
 
-def get_market_by_slug(slug: str) -> dict:
-    r = requests.get(GAMMA_URL, params={"slug": slug}, timeout=REQUEST_TIMEOUT)
+def get_market_by_identifier(identifier: str) -> dict:
+    identifier = str(identifier).strip()
+    params = {}
+    if identifier.isdigit():
+        params["id"] = identifier
+    else:
+        params["slug"] = identifier
+
+    r = requests.get(GAMMA_URL, params=params, timeout=REQUEST_TIMEOUT)
     r.raise_for_status()
     data = r.json()
     if not data:
-        raise ValueError(f"No Polymarket market found for slug={slug}")
+        raise ValueError(f"No Polymarket market found for identifier={identifier}")
     return data[0] if isinstance(data, list) else data
 
 
@@ -54,8 +61,8 @@ def _parse_clob_token_ids(raw_value) -> list[str]:
     raise ValueError("Unexpected clobTokenIds format")
 
 
-def get_token_id_from_slug(slug: str, outcome: str) -> str:
-    market = get_market_by_slug(slug)
+def get_token_id_from_identifier(identifier: str, outcome: str) -> str:
+    market = get_market_by_identifier(identifier)
     token_ids = _parse_clob_token_ids(market.get("clobTokenIds"))
 
     outcome = outcome.upper()
@@ -95,7 +102,7 @@ def place_limit_order(
         raise ValueError("order_type must be GTC, FOK, or FAK")
 
     client = build_client()
-    token_id = get_token_id_from_slug(slug, outcome)
+    token_id = get_token_id_from_identifier(slug, outcome)
 
     order_args = OrderArgs(
         token_id=token_id,

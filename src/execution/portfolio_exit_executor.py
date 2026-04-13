@@ -143,7 +143,11 @@ def process_portfolio_exits(
         
         # Determine actual owned amounts via API
         live_k = next((p for p in live_k_pos if normalize_str(p.get("ticker")) == pair["k_ticker"]), None)
-        live_p = next((p for p in live_p_pos if normalize_str(p.get("market_id")) == pair["p_ticker"]), None)
+        live_p = next((
+            p for p in live_p_pos if 
+            normalize_str(p.get("market_id")) == pair["p_ticker"] or 
+            normalize_str(p.get("numeric_id")) == pair["p_ticker"]
+        ), None)
         
         if not live_k:
             print(f"[{pair_id}] Skipped: Ticker {pair['k_ticker']} not found in live Kalshi positions.")
