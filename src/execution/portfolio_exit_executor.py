@@ -37,9 +37,9 @@ from arbitrage_calculator import get_polymarket_fee_category, calculate_polymark
 DEFAULT_TRACKED_PAIRS_CSV = os.path.join(PROJECT_ROOT, "Data", "tracked_pairs.csv")
 EXECUTION_LOG_CSV = os.path.join(PROJECT_ROOT, "Data", "portfolio_exit_execution_log.csv")
 
-DEFAULT_MIN_CONTRACTS_SELL = 5
-DEFAULT_MAX_CONTRACTS_SELL = 20
-DEFAULT_CUTOFF_CENTS = 0.995
+DEFAULT_MIN_CONTRACTS_SELL = 4
+DEFAULT_MAX_CONTRACTS_SELL = 50
+DEFAULT_CUTOFF_CENTS = 0.9899
 DEFAULT_SLEEP_MINUTES = 30
 
 # =========================================================
