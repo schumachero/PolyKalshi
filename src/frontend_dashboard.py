@@ -577,8 +577,10 @@ def main():
             kr, pr = k_df[k_df['PairID'] == pid], p_df[p_df['PairID'] == pid]
             title = kr['Title'].iloc[0] if not kr.empty else pr['Title'].iloc[0]
             kv, pv = kr['Value_USD'].sum() if not kr.empty else 0, pr['Value_USD'].sum() if not pr.empty else 0
+            kq, pq = kr['Quantity'].sum() if not kr.empty else 0, pr['Quantity'].sum() if not pr.empty else 0
             pair_list.append({
                 'Title': title, 'K_Val': kv, 'P_Val': pv,
+                'K_Qty': kq, 'P_Qty': pq,
                 'K_Side': kr['Side'].iloc[0] if not kr.empty else '', 
                 'P_Side': pr['Side'].iloc[0] if not pr.empty else '',
                 'MaxVal': max(kv, pv)
@@ -600,13 +602,17 @@ def main():
         fig_aligned.add_trace(go.Bar(
             y=aligned_df['WrappedTitle'], x=aligned_df['K_Val'], name='Kalshi', orientation='h',
             marker_color=[color_map.get(s, '#bdc3c7') for s in aligned_df['K_Side']],
-            text=aligned_df['K_Val'].apply(lambda v: f"${v:,.2f}" if v>0 else ""), textposition='auto'
+            text=aligned_df.apply(lambda r: f"{r['K_Qty']:,.0f} ctx (${r['K_Val']:,.2f})" if r['K_Val']>0 else "", axis=1), 
+            textposition='auto',
+            hovertemplate="<b>%{y}</b><br>Kalshi Qty: %{text}<extra></extra>"
         ), row=1, col=1)
         
         fig_aligned.add_trace(go.Bar(
             y=aligned_df['WrappedTitle'], x=aligned_df['P_Val'], name='Polymarket', orientation='h',
             marker_color=[color_map.get(s, '#bdc3c7') for s in aligned_df['P_Side']],
-            text=aligned_df['P_Val'].apply(lambda v: f"${v:,.2f}" if v>0 else ""), textposition='auto'
+            text=aligned_df.apply(lambda r: f"{r['P_Qty']:,.0f} ctx (${r['P_Val']:,.2f})" if r['P_Val']>0 else "", axis=1), 
+            textposition='auto',
+            hovertemplate="<b>%{y}</b><br>Polymarket Qty: %{text}<extra></extra>"
         ), row=1, col=2)
         
         fig_aligned.update_layout(
