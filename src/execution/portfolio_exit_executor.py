@@ -170,11 +170,22 @@ def process_portfolio_exits(
             print(f"[{pair_id}] Error fetching orderbooks: {e}")
             continue
             
-        k_bids = obs.get("kalshi", {}).get(pair["k_side"], {}).get("bids", [])
-        p_bids = obs.get("polymarket", {}).get(pair["p_side"], {}).get("bids", [])
+        # Dynamically resolve sides if missing in CSV (use live position data)
+        k_side = pair["k_side"] or normalize_str(live_k.get("side")).lower()
+        p_side = pair["p_side"] or normalize_str(live_p.get("side")).lower()
+
+        if not k_side or not p_side:
+            print(f"[{pair_id}] Skipped: Could not determine side held (K: '{k_side}', P: '{p_side}')")
+            continue
+
+        k_bids = obs.get("kalshi", {}).get(k_side, {}).get("bids", [])
+        p_bids = obs.get("polymarket", {}).get(p_side, {}).get("bids", [])
         
         if not k_bids or not p_bids:
-            print(f"[{pair_id}] Skipped: Missing bids on one or both books (K: {len(k_bids)}, P: {len(p_bids)})")
+            # Provide more detail on which book is missing bids
+            k_len = len(k_bids)
+            p_len = len(p_bids)
+            print(f"[{pair_id}] Skipped: Missing bids on side {k_side.upper()}/{p_side.upper()} (K: {k_len}, P: {p_len})")
             continue
             
         k_bid_price = safe_float(k_bids[0]["price"])
@@ -214,8 +225,8 @@ def process_portfolio_exits(
             
         print(
             f"\n[{pair_id}] EXIT TARGET HIT | "
-            f"Kalshi {pair['k_side'].upper()} BID @ {k_bid_price:.4f} (Net: {k_bid_net:.4f}) + "
-            f"Poly {pair['p_side'].upper()} BID @ {p_bid_price:.4f} (Net: {p_bid_net:.4f}) = "
+            f"Kalshi {k_side.upper()} BID @ {k_bid_price:.4f} (Net: {k_bid_net:.4f}) + "
+            f"Poly {p_side.upper()} BID @ {p_bid_price:.4f} (Net: {p_bid_net:.4f}) = "
             f"{sum_bid_price:.4f} RAW / {sum_net_bid_price:.4f} NET | Size: {executable_contracts}"
         )
         
@@ -238,8 +249,8 @@ def process_portfolio_exits(
                 "status": "dry_run_candidate",
                 "kalshi_ticker": pair["k_ticker"],
                 "polymarket_ticker": pair["p_ticker"],
-                "kalshi_side": pair["k_side"],
-                "polymarket_outcome": pair["p_side"],
+                "kalshi_side": k_side,
+                "polymarket_outcome": p_side,
                 "kalshi_bid_price": k_bid_price,
                 "polymarket_bid_price": p_bid_price,
                 "sum_bid_price": sum_bid_price,
@@ -252,7 +263,7 @@ def process_portfolio_exits(
         try:
             kalshi_resp = kalshi_place_limit_order(
                 ticker=pair["k_ticker"],
-                side=pair["k_side"],
+                side=k_side,
                 action="sell",
                 count=executable_contracts,
                 price_cents=kalshi_price_cents,
@@ -261,7 +272,7 @@ def process_portfolio_exits(
             
             poly_resp = polymarket_place_limit_order(
                 slug=pair["p_ticker"],
-                outcome=pair["p_side"].upper(),
+                outcome=p_side.upper(),
                 size=executable_contracts,
                 price=polymarket_price,
                 side="SELL",
@@ -274,8 +285,8 @@ def process_portfolio_exits(
                 "status": "success",
                 "kalshi_ticker": pair["k_ticker"],
                 "polymarket_ticker": pair["p_ticker"],
-                "kalshi_side": pair["k_side"],
-                "polymarket_outcome": pair["p_side"],
+                "kalshi_side": k_side,
+                "polymarket_outcome": p_side,
                 "kalshi_bid_price": k_bid_price,
                 "polymarket_bid_price": p_bid_price,
                 "sum_bid_price": sum_bid_price,
@@ -294,10 +305,11 @@ def process_portfolio_exits(
                 "status": "error",
                 "kalshi_ticker": pair["k_ticker"],
                 "polymarket_ticker": pair["p_ticker"],
-                "kalshi_side": pair["k_side"],
-                "polymarket_outcome": pair["p_side"],
+                "kalshi_side": k_side,
+                "polymarket_outcome": p_side,
                 "message": str(e)
             })
+
 
 
 # =========================================================
