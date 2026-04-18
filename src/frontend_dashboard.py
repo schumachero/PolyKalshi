@@ -63,6 +63,10 @@ PORTFOLIO_CSV = os.path.join("Data", "portfolio.csv")
 HISTORY_CSV = "Data/portfolio_history.csv"
 CAPITAL_CHANGES_CSV = "Data/capital_changes.csv"
 
+# --- CORE INVESTORS ---
+CORE_INVESTORS = ["Arvid Hedin", "Arvid Axelsson", "David Hallkvist", "Elis Graipe", "Erik Schaine"]
+PERFORMANCE_FEE_RATE = 0.20 # 20% of profit sharing
+
 def push_to_github(file_path, content, message):
     """
     Commits a file to GitHub using the REST API.
@@ -208,6 +212,104 @@ def transform_to_dataframe(k_pos, p_pos):
         })
     return pd.DataFrame(rows)
 
+# --- EQUITY SYSTEM UTILITIES ---
+
+def load_capital_changes():
+    if not os.path.exists(CAPITAL_CHANGES_CSV):
+        return pd.DataFrame(columns=["Timestamp", "Investor", "Type", "Amount_USD", "Units_Adjusted", "Price_At_Time"])
+    return pd.read_csv(CAPITAL_CHANGES_CSV)
+
+def get_investor_balances(current_nav):
+    cap_df = load_capital_changes()
+    if cap_df.empty:
+        return pd.DataFrame(), 0.0, 1.0
+
+    # Calculate total units
+    total_units = cap_df["Units_Adjusted"].sum()
+    current_price = current_nav / total_units if total_units > 0 else 1.0
+
+    balances = []
+    investors = cap_df["Investor"].unique()
+    
+    for inv in investors:
+        inv_df = cap_df[cap_df["Investor"] == inv]
+        shares = inv_df["Units_Adjusted"].sum()
+        
+        # Breakdown
+        buys = inv_df[inv_df["Type"] == "BUY"]["Amount_USD"].sum()
+        sells = inv_df[inv_df["Type"] == "SELL"]["Amount_USD"].sum()
+        net_invested = buys - sells
+        
+        # Fee info (for Core users)
+        fee_income_shares = inv_df[inv_df["Type"] == "FEE_TRANSFER"]["Units_Adjusted"].sum()
+        fee_income_usd = fee_income_shares * current_price
+        
+        current_value = shares * current_price
+        profit = current_value - net_invested
+        growth_pct = (profit / net_invested * 100) if net_invested > 0 else 0.0
+        
+        hwm_price = inv_df["Price_At_Time"].max() if not inv_df.empty else 1.0
+        
+        balances.append({
+            "Name": inv,
+            "Shares": shares,
+            "Inflow ($)": buys,
+            "Outflow ($)": sells,
+            "Net Invested": net_invested,
+            "Current Value": current_value,
+            "Profit": profit,
+            "Fee Income ($)": fee_income_usd if inv in CORE_INVESTORS else 0.0,
+            "Growth %": growth_pct,
+            "Equity %": (shares / total_units * 100) if total_units > 0 else 0.0,
+            "Is Core": inv in CORE_INVESTORS,
+            "HWM": hwm_price
+        })
+        
+    return pd.DataFrame(balances), total_units, current_price
+
+def get_equity_history(h_df, cap_df):
+    """Reconstructs historical value for each investor."""
+    if h_df.empty or cap_df.empty:
+        return pd.DataFrame()
+    
+    # Ensure timestamps are comparable
+    h_df = h_df.copy()
+    h_df['Timestamp'] = pd.to_datetime(h_df['Timestamp'])
+    cap_df = cap_df.copy()
+    cap_df['Timestamp'] = pd.to_datetime(cap_df['Timestamp'])
+    
+    investors = cap_df['Investor'].unique()
+    history_records = []
+    
+    for _, h_row in h_df.iterrows():
+        ts = h_row['Timestamp']
+        total_val = h_row['Total_Value_USD']
+        total_units = h_row['Total_Units']
+        price = total_val / total_units if total_units > 0 else 1.0
+        
+        for inv in investors:
+            # All transactions up to this point
+            inv_trans = cap_df[(cap_df['Investor'] == inv) & (cap_df['Timestamp'] <= ts)]
+            inv_shares = inv_trans['Units_Adjusted'].sum()
+            
+            if inv_shares > 1e-6: # Only track if they have holdings
+                inv_val = inv_shares * price
+                # Calculate basis at this point
+                inv_buys = inv_trans[inv_trans['Type'] == 'BUY']['Amount_USD'].sum()
+                inv_sells = inv_trans[inv_trans['Type'] == 'SELL']['Amount_USD'].sum()
+                inv_cost = inv_buys - inv_sells
+                inv_profit = inv_val - inv_cost
+                
+                history_records.append({
+                    "Timestamp": ts,
+                    "Investor": inv,
+                    "Value": inv_val,
+                    "Profit": inv_profit,
+                    "Growth %": (inv_profit / inv_cost * 100) if inv_cost > 0 else 0.0
+                })
+                
+    return pd.DataFrame(history_records)
+
 @st.cache_data(ttl=600)
 def get_dashboard_data():
     """Tries live API first, falls back to local CSV."""
@@ -329,11 +431,26 @@ def main():
             st.rerun()
         
         st.caption(f"Data Source: {source}")
-        
-        st.divider()
         with st.expander("Capital Management", expanded=False):
             st.markdown("Register injection/extraction of funds")
-            # Simplified input to avoid potential JS module loading issues in some environments
+            
+            # 1. Fetch current pool of investors
+            cap_df_sidebar = load_capital_changes()
+            existing_investors = sorted(cap_df_sidebar["Investor"].unique().tolist()) if not cap_df_sidebar.empty else CORE_INVESTORS
+            
+            # 2. Investor Selection
+            investor_options = existing_investors + ["+ Add New Investor"]
+            selected_investor = st.selectbox("Select Investor", options=investor_options)
+            
+            target_investor = selected_investor
+            if selected_investor == "+ Add New Investor":
+                target_investor = st.text_input("New Investor Name")
+            
+            # 3. Transaction Type
+            trans_type = st.radio("Type", ["BUY (Injection)", "SELL (Withdrawal)"], horizontal=True)
+            type_val = "BUY" if "BUY" in trans_type else "SELL"
+            
+            # 4. Amount input
             cap_change_raw = st.text_input("Amount (USD)", value="0.0")
             cap_change = 0.0
             try:
@@ -341,51 +458,59 @@ def main():
             except ValueError:
                 st.error("Please enter a valid numeric amount.")
             
-            if st.button("Confirm Capital Change"):
-                if os.path.exists(HISTORY_CSV):
-                    try:
-                        h_df_tmp = pd.read_csv(HISTORY_CSV)
-                        if not h_df_tmp.empty and "Total_Units" in h_df_tmp.columns:
-                            # Current Price = Last Total Value / Last Total Units
-                            last_val = h_df_tmp.iloc[-1]["Total_Value_USD"]
-                            last_units = h_df_tmp.iloc[-1]["Total_Units"]
-                            
-                            if last_units > 0:
-                                current_price = last_val / last_units
-                                units_to_add = cap_change / current_price
-                                
-                                # 1. Update history units (locally)
-                                h_df_tmp.iloc[-1, h_df_tmp.columns.get_loc("Total_Units")] += units_to_add
-                                h_df_tmp.to_csv(HISTORY_CSV, index=False)
-                                
-                                # 2. Log to capital changes history (locally)
-                                cap_record = pd.DataFrame([{
-                                    "Timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                                    "Amount_USD": cap_change,
-                                    "Units_Adjusted": units_to_add,
-                                    "Price_At_Time": current_price
-                                }])
-                                if os.path.exists(CAPITAL_CHANGES_CSV):
-                                    cap_record.to_csv(CAPITAL_CHANGES_CSV, mode='a', header=False, index=False)
-                                else:
-                                    cap_record.to_csv(CAPITAL_CHANGES_CSV, index=False)
-
-                                # 3. PUSH TO GITHUB (If token available)
-                                push_to_github(HISTORY_CSV, h_df_tmp.to_csv(index=False), f"Update units: {cap_change:+} USD")
-                                
-                                # Re-read for logging history to GH
-                                with open(CAPITAL_CHANGES_CSV, 'r') as f_cap:
-                                    push_to_github(CAPITAL_CHANGES_CSV, f_cap.read(), f"Log injection: {cap_change:+} USD")
-
-                                st.success(f"Adjusted portfolio by {units_to_add:,.4f} units")
-                                st.cache_data.clear()
-                                st.rerun()
-                            else:
-                                st.error("Cannot adjust capital: Initial units are zero.")
-                    except Exception as e_cap:
-                        st.error(f"Failed to update units: {e_cap}")
+            if st.button("Confirm Transaction"):
+                if not target_investor:
+                    st.error("Please provide an investor name.")
                 else:
-                    st.warning("No history file found to update.")
+                    try:
+                        # Fetch latest state
+                        h_df_tmp = pd.read_csv(HISTORY_CSV) if os.path.exists(HISTORY_CSV) else pd.DataFrame()
+                        
+                        # Current NAV is either the last logged history value or the live value
+                        current_nav = df['Value_USD'].sum() 
+                        
+                        # Get total units from capital changes (Source of Truth)
+                        total_units_before = cap_df_sidebar["Units_Adjusted"].sum() if not cap_df_sidebar.empty else 0.0
+                        
+                        # Calculate price per share
+                        current_price = current_nav / total_units_before if total_units_before > 0 else 1.0
+                        
+                        units_to_adjust = cap_change / current_price
+                        if type_val == "SELL":
+                            units_to_adjust = -units_to_adjust
+                        
+                        # Realize the change
+                        new_row = {
+                            "Timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                            "Investor": target_investor,
+                            "Type": type_val,
+                            "Amount_USD": cap_change,
+                            "Units_Adjusted": units_to_adjust,
+                            "Price_At_Time": current_price
+                        }
+                        
+                        # 1. Update capital changes CSV
+                        new_cap_record = pd.DataFrame([new_row])
+                        if os.path.exists(CAPITAL_CHANGES_CSV):
+                            new_cap_record.to_csv(CAPITAL_CHANGES_CSV, mode='a', header=False, index=False)
+                        else:
+                            new_cap_record.to_csv(CAPITAL_CHANGES_CSV, index=False)
+                            
+                        # 2. Update history units (if file exists)
+                        if not h_df_tmp.empty:
+                            h_df_tmp.iloc[-1, h_df_tmp.columns.get_loc("Total_Units")] += units_to_adjust
+                            h_df_tmp.to_csv(HISTORY_CSV, index=False)
+                            push_to_github(HISTORY_CSV, h_df_tmp.to_csv(index=False), f"Update units: {type_val} for {target_investor}")
+
+                        # 3. PUSH TO GITHUB
+                        with open(CAPITAL_CHANGES_CSV, 'r') as f_cap:
+                            push_to_github(CAPITAL_CHANGES_CSV, f_cap.read(), f"Log {type_val}: {cap_change} USD for {target_investor}")
+
+                        st.success(f"Success! {target_investor} adjusted by {units_to_adjust:,.4f} units")
+                        st.cache_data.clear()
+                        st.rerun()
+                    except Exception as e_cap:
+                        st.error(f"Failed to update capital: {e_cap}")
             
             # Show Recent Injections
             if os.path.exists(CAPITAL_CHANGES_CSV):
@@ -442,6 +567,140 @@ def main():
     m3.metric("Portfolio Weight", f"${invested_val:,.2f}")
     m4.metric("Available Cash", f"${cash_val:,.2f}")
     m5.metric("Last Update", adj_time)
+
+    # --- SHAREHOLDER EQUITY SECTION ---
+    st.divider()
+    st.subheader("💎 Shareholder Equity")
+    
+    bal_df, total_units, current_pps = get_investor_balances(total_val)
+    
+    if not bal_df.empty:
+        # 1. Visualization
+        s_col1, s_col2 = st.columns([2, 1])
+        with s_col1:
+            display_df = bal_df.copy()
+            # Formatting for display
+            display_df["Shares"] = display_df["Shares"].map("{:,.2f}".format)
+            display_df["Inflow ($)"] = display_df["Inflow ($)"].map("${:,.2f}".format)
+            display_df["Outflow ($)"] = display_df["Outflow ($)"].map("${:,.2f}".format)
+            display_df["Current Value"] = display_df["Current Value"].map("${:,.2f}".format)
+            display_df["Profit"] = display_df["Profit"].map("${:,.2f}".format)
+            display_df["Fee Income ($)"] = display_df["Fee Income ($)"].map("${:,.2f}".format)
+            display_df["Growth %"] = display_df["Growth %"].map("{:,.1f}%".format)
+            display_df["Equity %"] = display_df["Equity %"].map("{:,.1f}%".format)
+            
+            # Show Fee Income column only if there has been any
+            cols_to_show = ["Name", "Shares", "Inflow ($)", "Outflow ($)", "Current Value", "Profit", "Growth %", "Equity %"]
+            if bal_df["Fee Income ($)"].sum() > 0:
+                cols_to_show.insert(5, "Fee Income ($)")
+
+            st.dataframe(
+                display_df[cols_to_show],
+                use_container_width=True,
+                hide_index=True
+            )
+            
+        with s_col2:
+            fig_equity = px.pie(
+                bal_df, values='Shares', names='Name', 
+                title='Equity Distribution',
+                color_discrete_sequence=px.colors.qualitative.Pastel
+            )
+            fig_equity.update_layout(margin=dict(l=20, r=20, t=40, b=20), height=300, showlegend=False)
+            st.plotly_chart(fig_equity, use_container_width=True)
+
+        # 3. Individual Equity History
+        if os.path.exists(HISTORY_CSV):
+            try:
+                h_df_equity = pd.read_csv(HISTORY_CSV)
+                cap_df_equity = load_capital_changes()
+                equity_hist = get_equity_history(h_df_equity, cap_df_equity)
+                
+                if not equity_hist.empty:
+                    st.markdown("##### 📈 Individual Value History ($)")
+                    fig_eq_hist = px.line(
+                        equity_hist, x="Timestamp", y="Value", color="Investor",
+                        template="plotly_dark", height=400,
+                        line_shape="spline",
+                        labels={"Value": "Value (USD)"}
+                    )
+                    fig_eq_hist.update_layout(margin=dict(l=40, r=40, t=20, b=40), hovermode="x unified")
+                    st.plotly_chart(fig_eq_hist, use_container_width=True)
+            except Exception as e_hist:
+                st.caption(f"Could not load individual history: {e_hist}")
+
+        # 4. Performance Fee Logic (Carry)
+        new_users = bal_df[~bal_df["Is Core"]]
+        if not new_users.empty:
+            st.markdown("##### 📈 Unrealized Performance Fees (20% Carry)")
+            fee_rows = []
+            total_unrealized_fee = 0.0
+            
+            for _, u in new_users.iterrows():
+                # Profit above HWM
+                gain_per_share = max(0, current_pps - u["HWM"])
+                if gain_per_share > 0:
+                    unrealized_fee_dollars = gain_per_share * u["Shares"] * PERFORMANCE_FEE_RATE
+                    total_unrealized_fee += unrealized_fee_dollars
+                    fee_rows.append({
+                        "Investor": u["Name"],
+                        "Profit Above HWM": f"${(gain_per_share * u['Shares']):,.2f}",
+                        "Expected Fee": f"${unrealized_fee_dollars:,.2f}",
+                        "Fee in Shares": f"{(unrealized_fee_dollars / current_pps):,.4f}"
+                    })
+            
+            if fee_rows:
+                st.table(pd.DataFrame(fee_rows))
+                if st.button("🚀 Realize Performance Fees", help="Transfers earned shares from new users to original 5 core users"):
+                    # realization logic
+                    try:
+                        new_cap_entries = []
+                        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                        
+                        core_investors_df = bal_df[bal_df["Is Core"]]
+                        total_core_shares = core_investors_df["Shares"].sum()
+                        
+                        for _, u in new_users.iterrows():
+                            gain_per_share = max(0, current_pps - u["HWM"])
+                            if gain_per_share > 0:
+                                fee_dollars = gain_per_share * u["Shares"] * PERFORMANCE_FEE_RATE
+                                shares_to_transfer = fee_dollars / current_pps
+                                
+                                # 1. Deduct from New User
+                                new_cap_entries.append({
+                                    "Timestamp": timestamp,
+                                    "Investor": u["Name"],
+                                    "Type": "FEE_TRANSFER",
+                                    "Amount_USD": 0.0,
+                                    "Units_Adjusted": -shares_to_transfer,
+                                    "Price_At_Time": current_pps
+                                })
+                                
+                                # 2. Disperse to Core Users (Proportional)
+                                for _, core in core_investors_df.iterrows():
+                                    weight = core["Shares"] / total_core_shares
+                                    new_cap_entries.append({
+                                        "Timestamp": timestamp,
+                                        "Investor": core["Name"],
+                                        "Type": "FEE_TRANSFER",
+                                        "Amount_USD": 0.0,
+                                        "Units_Adjusted": shares_to_transfer * weight,
+                                        "Price_At_Time": current_pps
+                                    })
+                        
+                        if new_cap_entries:
+                            fee_df = pd.DataFrame(new_cap_entries)
+                            fee_df.to_csv(CAPITAL_CHANGES_CSV, mode='a', header=False, index=False)
+                            push_to_github(CAPITAL_CHANGES_CSV, fee_df.to_csv(header=False, index=False), "Realized Performance Fees")
+                            st.success(f"Successfully realized ${total_unrealized_fee:,.2f} in performance fees!")
+                            st.cache_data.clear()
+                            st.rerun()
+                    except Exception as e_fee:
+                        st.error(f"Fee realization failed: {e_fee}")
+            else:
+                st.info("No realized profits eligible for performance fees at current price.")
+    else:
+        st.warning("Could not calculate shareholder balances. Check Data/capital_changes.csv")
 
 
     st.divider()

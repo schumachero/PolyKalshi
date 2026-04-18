@@ -1,1 +1,6 @@
-Timestamp,Amount_USD,Units_Adjusted,Price_At_Time
+Timestamp,Investor,Type,Amount_USD,Units_Adjusted,Price_At_Time
+2026-03-28 20:48:04,Arvid Hedin,BUY,634.0,634.0,1.0
+2026-03-28 20:48:04,Arvid Axelsson,BUY,634.0,634.0,1.0
+2026-03-28 20:48:04,David Hallkvist,BUY,634.0,634.0,1.0
+2026-03-28 20:48:04,Elis Graipe,BUY,634.0,634.0,1.0
+2026-03-28 20:48:04,Erik Schaine,BUY,634.0,634.0,1.0

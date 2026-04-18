@@ -65,8 +65,14 @@ def log_to_history(total_value):
     total_units = total_value # Default to value if it's the first entry (Initial Price = 1.0)
     
     try:
-        # Read the previous units if the file exists
-        if file_exists:
+        # Read the total units from the capital changes CSV (Source of Truth)
+        CAPITAL_CHANGES_CSV = os.path.join("Data", "capital_changes.csv")
+        if os.path.exists(CAPITAL_CHANGES_CSV):
+            df_cap = pd.read_csv(CAPITAL_CHANGES_CSV)
+            if not df_cap.empty and "Units_Adjusted" in df_cap.columns:
+                total_units = df_cap["Units_Adjusted"].sum()
+        elif file_exists:
+            # Fallback to history file if capital changes missing
             df_existing = pd.read_csv(HISTORY_CSV)
             if not df_existing.empty and "Total_Units" in df_existing.columns:
                 total_units = df_existing.iloc[-1]["Total_Units"]
