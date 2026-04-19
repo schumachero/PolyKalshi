@@ -35,9 +35,9 @@ def _safe_corr(a: np.ndarray, b: np.ndarray) -> float | None:
 
 # ── Core Analysis ────────────────────────────────────────────────────────────
 
-def compute_returns(series: pd.Series) -> pd.Series:
-    """Simple first-difference returns."""
-    return series.diff()
+def compute_returns(series: pd.Series, lookback: int = 1) -> pd.Series:
+    """Returns measured over `lookback` steps."""
+    return series.diff(periods=lookback)
 
 
 def cross_correlation_at_lags(
@@ -165,19 +165,20 @@ def analyze_pair(
     lags: list[int] | None = None,
     horizons: list[int] | None = None,
     min_move: float = 0.0,
+    lookback: int = 1,
 ) -> dict:
     """Run full analysis for one pair. Returns structured results dict."""
     if lags is None:
-        lags = [1, 2, 3, 5, 10, 20]
+        lags = [1, 2, 3, 5, 10, 20, 60, 120, 360, 720]
     if horizons is None:
-        horizons = [1, 2, 3, 5, 10, 20]
+        horizons = [1, 2, 3, 5, 10, 20, 60, 120, 360, 720]
 
     pair_id = df_pair["pair_id"].iloc[0]
     n_obs = len(df_pair)
 
     # Compute returns
-    k_ret = compute_returns(df_pair["k_mid"])
-    p_ret = compute_returns(df_pair["p_mid"])
+    k_ret = compute_returns(df_pair["k_mid"], lookback=lookback)
+    p_ret = compute_returns(df_pair["p_mid"], lookback=lookback)
 
     result = {
         "pair_id": pair_id,
@@ -234,6 +235,7 @@ def run_analyzer(
     input_csv: str = "Data/leadlag/price_series.csv",
     output_json: str = "Data/leadlag/analysis_results.json",
     min_move: float = 0.0,
+    lookback: int = 1,
 ) -> list[dict]:
     """Analyze all pairs in the price series CSV."""
     if not os.path.exists(input_csv):
@@ -263,7 +265,7 @@ def run_analyzer(
         print(f"\n{'='*60}")
         print(f"Pair: {pair_id}")
         print(f"  Observations: {len(valid)}")
-        result = analyze_pair(df_pair, min_move=min_move)
+        result = analyze_pair(df_pair, min_move=min_move, lookback=lookback)
         all_results.append(result)
 
         # --- Pretty-print summary ---
@@ -334,9 +336,16 @@ def main():
     parser.add_argument("--output", type=str, default="Data/leadlag/analysis_results.json")
     parser.add_argument("--min-move", type=float, default=0.0,
                         help="Minimum leader price move to count as a signal (0-1 scale)")
+    parser.add_argument("--lookback", type=int, default=1,
+                        help="How many steps to measure the price move over (default: 1)")
     args = parser.parse_args()
 
-    run_analyzer(input_csv=args.input, output_json=args.output, min_move=args.min_move)
+    run_analyzer(
+        input_csv=args.input, 
+        output_json=args.output, 
+        min_move=args.min_move,
+        lookback=args.lookback
+    )
 
 
 if __name__ == "__main__":

@@ -27,6 +27,7 @@ def run_backtest_single(
     threshold: float = 0.02,
     hold_period: int = 10,
     slippage: float = 0.005,
+    lookback: int = 1,
 ) -> dict:
     """
     Backtest one parameter combo for one pair.
@@ -46,7 +47,7 @@ def run_backtest_single(
     trades = []
     open_position = None
 
-    for t in range(1, n):
+    for t in range(lookback, n):
         # Close position if holding period expired
         if open_position and t >= open_position["exit_time"]:
             exit_price = lagger[t]
@@ -73,12 +74,12 @@ def run_backtest_single(
 
         # Open new position if none active
         if open_position is None:
-            if not np.isfinite(leader[t]) or not np.isfinite(leader[t - 1]):
+            if not np.isfinite(leader[t]) or not np.isfinite(leader[t - lookback]):
                 continue
             if not np.isfinite(lagger[t]):
                 continue
 
-            leader_move = leader[t] - leader[t - 1]
+            leader_move = leader[t] - leader[t - lookback]
 
             if abs(leader_move) > threshold:
                 direction = "long" if leader_move > 0 else "short"
@@ -127,19 +128,22 @@ def run_grid_search(
     thresholds: list[float] | None = None,
     hold_periods: list[int] | None = None,
     slippages: list[float] | None = None,
+    lookbacks: list[int] | None = None,
     leader_col: str = "p_mid",
     lagger_col: str = "k_mid",
 ) -> list[dict]:
     """Run backtest over grid of parameters for one pair."""
     if thresholds is None:
-        thresholds = [0.01, 0.02, 0.03, 0.05]
+        thresholds = [0.01, 0.02, 0.03, 0.05, 0.10, 0.15]
     if hold_periods is None:
         hold_periods = [5, 10, 20, 60]
     if slippages is None:
-        slippages = [0.005, 0.01, 0.02]
+        slippages = [0.005, 0.01]
+    if lookbacks is None:
+        lookbacks = [1, 12, 60]  # 5 sec, 1 min, 5 min
 
     results = []
-    for thresh, hold, slip in product(thresholds, hold_periods, slippages):
+    for thresh, hold, slip, lb in product(thresholds, hold_periods, slippages, lookbacks):
         bt = run_backtest_single(
             df_pair,
             leader_col=leader_col,
@@ -147,6 +151,7 @@ def run_grid_search(
             threshold=thresh,
             hold_period=hold,
             slippage=slip,
+            lookback=lb,
         )
         results.append({
             "pair_id": pair_id,
@@ -155,6 +160,7 @@ def run_grid_search(
             "threshold": thresh,
             "hold_period": hold,
             "slippage": slip,
+            "lookback": lb,
             "n_trades": bt["n_trades"],
             "total_pnl": bt["total_pnl"],
             "avg_pnl": bt["avg_pnl"],
