@@ -806,6 +806,7 @@ def main():
             min_liquidity_usd=args.min_liquidity_usd,
             reverify_books=reverify_books,
         )
+        print(f"Run finished at: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')} UTC")
         return
 
     interval_seconds = max(args.interval_minutes, 1) * 60
@@ -829,7 +830,7 @@ def main():
         elapsed = time.time() - cycle_start
         sleep_seconds = max(interval_seconds - elapsed, 0)
 
-        print(f"Iteration {iteration} finished in {elapsed:.1f}s")
+        print(f"Iteration {iteration} finished in {elapsed:.1f}s at: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')} UTC")
         print(f"Sleeping for {sleep_seconds / 60:.2f} minutes... Press Ctrl+C to stop.")
 
         try:

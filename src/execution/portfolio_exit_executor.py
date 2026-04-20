@@ -337,6 +337,7 @@ def main():
             min_sell=args.min_sell,
             max_sell=args.max_sell
         )
+        print(f"Run finished at: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')} UTC")
         return
 
     interval_seconds = max(args.interval_minutes, 1) * 60
@@ -361,7 +362,7 @@ def main():
         elapsed = time.time() - cycle_start
         sleep_seconds = max(interval_seconds - elapsed, 0)
 
-        print(f"\nIteration {iteration} finished in {elapsed:.1f}s")
+        print(f"\nIteration {iteration} finished in {elapsed:.1f}s at: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')} UTC")
         print(f"Sleeping for {sleep_seconds / 60:.2f} minutes... Press Ctrl+C to stop.")
 
         try:
