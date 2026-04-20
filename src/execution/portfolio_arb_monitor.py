@@ -41,7 +41,7 @@ from execution.polymarket_trade import place_limit_order as polymarket_place_lim
 # Configuration
 # =========================================================
 
-TRACKED_PAIRS_CSV = os.path.join(PROJECT_ROOT, "Data", "tracked_pairs.csv")
+TRACKED_PAIRS_CSV = os.path.join(PROJECT_ROOT, "Data", "tracked_pairs_buy.csv")
 EXECUTION_LOG_CSV = os.path.join(PROJECT_ROOT, "Data", "portfolio_arb_execution_log.csv")
 
 DEFAULT_MAX_TRADE_USD = 20.0 

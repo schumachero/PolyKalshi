@@ -5,4 +5,5 @@ __pycache__/
 Data/*.csv
 !Data/portfolio_history.csv
 !Data/capital_changes.csv
+!Data/tracked_pairs_buy.csv
 .DS_Store
