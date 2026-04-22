@@ -37,6 +37,11 @@ from apis.orderbook import (
 from execution.kalshi_trade import place_limit_order as kalshi_place_limit_order
 from execution.polymarket_trade import place_limit_order as polymarket_place_limit_order
 
+from arbitrage_calculator import (
+    calculate_polymarket_fee,
+    get_polymarket_fee_category,
+)
+
 # =========================================================
 # Configuration
 # =========================================================
@@ -45,13 +50,20 @@ TRACKED_PAIRS_CSV = os.path.join(PROJECT_ROOT, "Data", "tracked_pairs.csv")
 EXECUTION_LOG_CSV = os.path.join(PROJECT_ROOT, "Data", "portfolio_arb_execution_log.csv")
 
 DEFAULT_MAX_TRADE_USD = 20.0 
-DEFAULT_MIN_PROFIT_PCT = 7.5
+DEFAULT_MIN_PROFIT_PCT = 6.5
+DEFAULT_MIN_PROFIT_FLOOR_PCT = 0.0 #(maybe have this?)
+DEFAULT_MIN_APR_PCT = 25.0
 DEFAULT_MIN_LIQUIDITY_USD = 4.0
 DEFAULT_SLEEP_MINUTES = 30
 
-# Fee cushions can be used as conservative safety margins
-KALSHI_FEE_BUFFER = 0.0
-POLY_FEE_BUFFER = 0.0
+# Kalshi taker fee: 7% * p * (1 - p)  (in dollar terms, 0-1 scale)
+KALSHI_FEE_RATE = 0.07
+
+def _kalshi_fee(price: float) -> float:
+    """Kalshi taker fee for a single contract at `price` (0-1 scale)."""
+    if price <= 0.0 or price >= 1.0:
+        return 0.0
+    return KALSHI_FEE_RATE * price * (1.0 - price)
 
 # Reverify against live books again immediately before sending orders
 DEFAULT_REVERIFY_BOOKS = True
@@ -63,17 +75,23 @@ DEFAULT_REVERIFY_BOOKS = True
 def utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
-def top_of_book_arb(levels_a, levels_b, max_trade_usd, fee_buffer_a=0.0, fee_buffer_b=0.0):
+def top_of_book_arb(levels_a, levels_b, max_trade_usd, pm_category="Other / General"):
     """
     Only use depth 1 from each book.
+    Leg A = Kalshi ask, Leg B = Polymarket ask.
+    Fees are computed from actual prices:
+      - Kalshi: 7% * p * (1-p)
+      - Polymarket: category-based fee from arbitrage_calculator
 
     Returns:
     {
         "found": bool,
         "contracts": float,
-        "price_a": float,
-        "price_b": float,
-        "sum_price": float,
+        "price_a": float,       # raw Kalshi ask
+        "price_b": float,       # raw Polymarket ask
+        "fee_a": float,         # Kalshi fee per contract
+        "fee_b": float,         # Polymarket fee per contract
+        "sum_price": float,     # total cost incl. fees
         "profit_pct": float,
         "notional_usd": float,
         "gross_profit_usd": float,
@@ -92,7 +110,10 @@ def top_of_book_arb(levels_a, levels_b, max_trade_usd, fee_buffer_a=0.0, fee_buf
     sa = a[0]["size"]
     sb = b[0]["size"]
 
-    sum_price = pa + pb + fee_buffer_a + fee_buffer_b
+    fee_a = _kalshi_fee(pa)
+    fee_b = calculate_polymarket_fee(pb, pm_category)
+
+    sum_price = pa + pb + fee_a + fee_b
     if sum_price >= 1.0:
         return {"found": False}
 
@@ -111,6 +132,8 @@ def top_of_book_arb(levels_a, levels_b, max_trade_usd, fee_buffer_a=0.0, fee_buf
         "contracts": contracts,
         "price_a": pa,
         "price_b": pb,
+        "fee_a": fee_a,
+        "fee_b": fee_b,
         "sum_price": sum_price,
         "profit_pct": profit_pct,
         "notional_usd": notional_usd,
@@ -118,6 +141,38 @@ def top_of_book_arb(levels_a, levels_b, max_trade_usd, fee_buffer_a=0.0, fee_buf
         "depth_a_used": 0,
         "depth_b_used": 0,
     }
+
+def check_arb_thresholds(
+    profit_pct: float,
+    pair_row: pd.Series,
+    min_profit_pct: float,
+    min_profit_floor_pct: float,
+    min_apr_pct: float
+) -> dict:
+    result = {
+        "is_acceptable": False,
+        "apr_pct": 0.0,
+        "days_to_close": -1.0
+    }
+
+    if profit_pct >= min_profit_pct:
+        result["is_acceptable"] = True
+
+    if not result["is_acceptable"] and profit_pct >= min_profit_floor_pct:
+        close_time_str = pair_row.get("close_time", "")
+        if close_time_str and not pd.isna(close_time_str):
+            try:
+                parsed_date = pd.to_datetime(close_time_str, utc=True)
+                delta_days = (parsed_date - datetime.now(timezone.utc)).total_seconds() / 86400.0
+                result["days_to_close"] = max(delta_days, 1.0)
+                result["apr_pct"] = profit_pct * (365.0 / result["days_to_close"])
+                if result["apr_pct"] >= min_apr_pct:
+                    result["is_acceptable"] = True
+            except Exception:
+                pass
+
+    return result
+
 def ensure_parent_dir(filepath: str) -> None:
     parent = os.path.dirname(filepath)
     if parent:
@@ -285,16 +340,18 @@ def consume_dual_books(
     levels_a: List[Dict[str, float]],
     levels_b: List[Dict[str, float]],
     max_trade_usd: float,
-    fee_buffer_a: float = 0.0,
-    fee_buffer_b: float = 0.0,
+    pm_category: str = "Other / General",
 ) -> dict:
     """
     Depth-aware execution simulation:
     - buy from both books simultaneously
     - walk deeper when best level is exhausted
     - compute weighted average prices over the executable fill
+    - fees are computed per-level from actual prices:
+        * Leg A (Kalshi): 7% * p * (1-p)
+        * Leg B (Polymarket): category-based fee
     - stop when:
-        * no arb remains at current marginal prices
+        * no arb remains at current marginal prices (incl. fees)
         * no size remains
         * max_trade_usd cap is reached
 
@@ -304,7 +361,7 @@ def consume_dual_books(
         "contracts": float,
         "price_a": float,        # weighted avg executed price on leg A
         "price_b": float,        # weighted avg executed price on leg B
-        "sum_price": float,
+        "sum_price": float,      # total cost incl. fees
         "profit_pct": float,
         "notional_usd": float,
         "gross_payout_usd": float,
@@ -326,19 +383,24 @@ def consume_dual_books(
     total_contracts = 0.0
     total_cost_a = 0.0
     total_cost_b = 0.0
+    total_fees = 0.0
     levels_used = []
 
     while i < len(a) and j < len(b):
         pa = a[i]["price"]
         pb = b[j]["price"]
 
-        marginal_sum_price = pa + pb + fee_buffer_a + fee_buffer_b
+        fee_a = _kalshi_fee(pa)
+        fee_b = calculate_polymarket_fee(pb, pm_category)
+
+        marginal_sum_price = pa + pb + fee_a + fee_b
 
         # No arb at this marginal level anymore
         if marginal_sum_price >= 1.0:
             break
 
-        max_affordable_contracts = (max_trade_usd - (total_cost_a + total_cost_b)) / max(marginal_sum_price, 1e-12)
+        spent_so_far = total_cost_a + total_cost_b + total_fees
+        max_affordable_contracts = (max_trade_usd - spent_so_far) / max(marginal_sum_price, 1e-12)
         if max_affordable_contracts <= 1e-12:
             break
 
@@ -354,12 +416,15 @@ def consume_dual_books(
         total_contracts += executable_size
         total_cost_a += executable_size * pa
         total_cost_b += executable_size * pb
+        total_fees += executable_size * (fee_a + fee_b)
 
         levels_used.append({
             "depth_a": i,
             "depth_b": j,
             "price_a": pa,
             "price_b": pb,
+            "fee_a": fee_a,
+            "fee_b": fee_b,
             "contracts": executable_size,
             "marginal_sum_price": marginal_sum_price,
             "marginal_profit_pct": (1.0 - marginal_sum_price) * 100.0,
@@ -378,7 +443,8 @@ def consume_dual_books(
 
     avg_price_a = total_cost_a / total_contracts
     avg_price_b = total_cost_b / total_contracts
-    avg_sum_price = avg_price_a + avg_price_b + fee_buffer_a + fee_buffer_b
+    avg_fee = total_fees / total_contracts
+    avg_sum_price = avg_price_a + avg_price_b + avg_fee
     gross_payout_usd = total_contracts * 1.0
     gross_profit_usd = gross_payout_usd - (total_contracts * avg_sum_price)
     profit_pct = ((1.0 - avg_sum_price) * 100.0)
@@ -399,6 +465,16 @@ def consume_dual_books(
     }
 
 
+def _get_pm_category(pair_row: pd.Series) -> str:
+    """Derive the Polymarket fee category from the pair row's title fields."""
+    poly_title = normalize_str(pair_row.get("polymarket_title", ""))
+    kalshi_title = normalize_str(pair_row.get("kalshi_title", ""))
+    series_title = ""  # tracked_pairs.csv doesn't have a series column
+    # Use poly title if available, fall back to kalshi title for category detection
+    market_title = poly_title or kalshi_title
+    return get_polymarket_fee_category(market_title, series_title)
+
+
 def choose_best_arb_for_pair(pair_row: pd.Series) -> dict:
     """
     Check both:
@@ -406,12 +482,15 @@ def choose_best_arb_for_pair(pair_row: pd.Series) -> dict:
       2) Kalshi NO  + Polymarket YES
 
     Return best weighted executable arb for this tracked pair only.
+    Fees are computed from actual prices (Kalshi 7% + Polymarket category-based).
     """
     kalshi_ticker = normalize_str(pair_row["kalshi_ticker"])
     polymarket_slug = normalize_str(pair_row["polymarket_ticker"])
 
     csv_limit = safe_float(pair_row.get("max_position_per_pair_usd"), 999999)
     max_trade_usd = min(csv_limit, DEFAULT_MAX_TRADE_USD)
+
+    pm_category = _get_pm_category(pair_row)
 
     kalshi_books = get_yes_no_books_kalshi(kalshi_ticker)
     poly_no = get_outcome_books_polymarket(polymarket_slug, "NO")
@@ -421,16 +500,14 @@ def choose_best_arb_for_pair(pair_row: pd.Series) -> dict:
         kalshi_books["yes_asks"],
         poly_no["buy_levels"],
         max_trade_usd=max_trade_usd,
-        fee_buffer_a=KALSHI_FEE_BUFFER,
-        fee_buffer_b=POLY_FEE_BUFFER,
+        pm_category=pm_category,
     )
 
     candidate_no_yes = top_of_book_arb(
         kalshi_books["no_asks"],
         poly_yes["buy_levels"],
         max_trade_usd=max_trade_usd,
-        fee_buffer_a=KALSHI_FEE_BUFFER,
-        fee_buffer_b=POLY_FEE_BUFFER,
+        pm_category=pm_category,
     )
 
     options = []
@@ -440,6 +517,7 @@ def choose_best_arb_for_pair(pair_row: pd.Series) -> dict:
         candidate_yes_no["polymarket_outcome"] = "NO"
         candidate_yes_no["kalshi_ticker"] = kalshi_ticker
         candidate_yes_no["polymarket_ticker"] = polymarket_slug
+        candidate_yes_no["pm_category"] = pm_category
         options.append(candidate_yes_no)
 
     if candidate_no_yes.get("found"):
@@ -447,6 +525,7 @@ def choose_best_arb_for_pair(pair_row: pd.Series) -> dict:
         candidate_no_yes["polymarket_outcome"] = "YES"
         candidate_no_yes["kalshi_ticker"] = kalshi_ticker
         candidate_no_yes["polymarket_ticker"] = polymarket_slug
+        candidate_no_yes["pm_category"] = pm_category
         options.append(candidate_no_yes)
 
     pair_id = normalize_str(
@@ -481,13 +560,15 @@ def choose_best_arb_for_pair(pair_row: pd.Series) -> dict:
 def reverify_pair_live(pair_row: pd.Series, original_arb: dict) -> dict:
     """
     Re-fetch books right before execution and recompute the same side only,
-    using top-of-book logic only.
+    using top-of-book logic with real fee calculation.
     """
     kalshi_ticker = normalize_str(pair_row["kalshi_ticker"])
     polymarket_slug = normalize_str(pair_row["polymarket_ticker"])
 
     csv_limit = safe_float(pair_row.get("max_position_per_pair_usd"), 999999)
     max_trade_usd = min(csv_limit, DEFAULT_MAX_TRADE_USD)
+
+    pm_category = original_arb.get("pm_category", _get_pm_category(pair_row))
 
     kalshi_books = get_yes_no_books_kalshi(kalshi_ticker)
 
@@ -497,12 +578,12 @@ def reverify_pair_live(pair_row: pd.Series, original_arb: dict) -> dict:
             kalshi_books["yes_asks"],
             poly_books["buy_levels"],
             max_trade_usd=max_trade_usd,
-            fee_buffer_a=KALSHI_FEE_BUFFER,
-            fee_buffer_b=POLY_FEE_BUFFER,
+            pm_category=pm_category,
         )
         if live.get("found"):
             live["kalshi_side"] = "yes"
             live["polymarket_outcome"] = "NO"
+            live["pm_category"] = pm_category
         return live
 
     if original_arb["kalshi_side"] == "no" and original_arb["polymarket_outcome"] == "YES":
@@ -511,12 +592,12 @@ def reverify_pair_live(pair_row: pd.Series, original_arb: dict) -> dict:
             kalshi_books["no_asks"],
             poly_books["buy_levels"],
             max_trade_usd=max_trade_usd,
-            fee_buffer_a=KALSHI_FEE_BUFFER,
-            fee_buffer_b=POLY_FEE_BUFFER,
+            pm_category=pm_category,
         )
         if live.get("found"):
             live["kalshi_side"] = "no"
             live["polymarket_outcome"] = "YES"
+            live["pm_category"] = pm_category
         return live
 
     return {"found": False}
@@ -601,6 +682,8 @@ def process_pair(
     pair_row: pd.Series,
     dry_run: bool = True,
     min_profit_pct: float = DEFAULT_MIN_PROFIT_PCT,
+    min_profit_floor_pct: float = DEFAULT_MIN_PROFIT_FLOOR_PCT,
+    min_apr_pct: float = DEFAULT_MIN_APR_PCT,
     min_liquidity_usd: float = DEFAULT_MIN_LIQUIDITY_USD,
     reverify_books: bool = DEFAULT_REVERIFY_BOOKS,
 ) -> None:
@@ -623,20 +706,32 @@ def process_pair(
             print(f"[{pair_id}] no arb found")
             return
 
-        if arb["profit_pct"] < min_profit_pct:
-            print(f"[{pair_id}] arb found but below min profit: {arb['profit_pct']:.3f}%")
+        eval_res = check_arb_thresholds(
+            arb["profit_pct"], pair_row,
+            min_profit_pct, min_profit_floor_pct, min_apr_pct
+        )
+
+        if not eval_res["is_acceptable"]:
+            if eval_res["days_to_close"] > 0:
+                print(f"[{pair_id}] arb found but rejected: {arb['profit_pct']:.3f}% (APR: {eval_res['apr_pct']:.1f}%, days: {eval_res['days_to_close']:.1f})")
+            else:
+                print(f"[{pair_id}] arb found but below hard min profit: {arb['profit_pct']:.3f}%")
             return
+
+        arb["apr_pct"] = eval_res["apr_pct"]
+        arb["days_to_close"] = eval_res["days_to_close"]
 
         if arb["notional_usd"] < min_liquidity_usd:
             print(f"[{pair_id}] arb found but insufficient liquidity: ${arb['notional_usd']:.2f}")
             return
 
+        apr_str = f" | APR {arb['apr_pct']:.1f}% (days: {arb['days_to_close']:.1f})" if arb["days_to_close"] > 0 else ""
         print(
             f"[{pair_id}] arb found | "
             f"Kalshi {arb['kalshi_side'].upper()} @ {arb['price_a']:.4f} + "
             f"Poly {arb['polymarket_outcome']} @ {arb['price_b']:.4f} = "
             f"{arb['sum_price']:.4f} | "
-            f"profit {arb['profit_pct']:.3f}% | "
+            f"profit {arb['profit_pct']:.3f}%{apr_str} | "
             f"contracts {arb['contracts']:.4f} | "
             f"notional ${arb['notional_usd']:.2f} | "
             f"gross profit ${arb['gross_profit_usd']:.4f}"
@@ -660,6 +755,8 @@ def process_pair(
                     "polymarket_price": arb["price_b"],
                     "sum_price": arb["sum_price"],
                     "profit_pct": arb["profit_pct"],
+                    "apr_pct": arb["apr_pct"],
+                    "days_to_close": arb["days_to_close"],
                     "contracts": arb["contracts"],
                     "notional_usd": arb["notional_usd"],
                     "gross_profit_usd": arb["gross_profit_usd"],
@@ -667,10 +764,19 @@ def process_pair(
                 })
                 return
 
-            if live_arb["profit_pct"] < min_profit_pct:
-                msg = f"reverified arb below min profit: {live_arb['profit_pct']:.3f}%"
+            live_eval = check_arb_thresholds(
+                live_arb["profit_pct"], pair_row,
+                min_profit_pct, min_profit_floor_pct, min_apr_pct
+            )
+
+            if not live_eval["is_acceptable"]:
+                msg = f"reverified arb rejected: {live_arb['profit_pct']:.3f}%"
+                if live_eval["days_to_close"] > 0:
+                    msg += f" (APR: {live_eval['apr_pct']:.1f}%)"
                 print(f"[{pair_id}] {msg}")
                 return
+            live_arb["apr_pct"] = live_eval["apr_pct"]
+            live_arb["days_to_close"] = live_eval["days_to_close"]
 
             if live_arb["notional_usd"] < min_liquidity_usd:
                 msg = f"reverified arb below min liquidity: ${live_arb['notional_usd']:.2f}"
@@ -700,6 +806,8 @@ def process_pair(
                 "polymarket_price": arb["price_b"],
                 "sum_price": arb["sum_price"],
                 "profit_pct": arb["profit_pct"],
+                "apr_pct": arb.get("apr_pct", 0.0),
+                "days_to_close": arb.get("days_to_close", -1.0),
                 "contracts": arb["contracts"],
                 "notional_usd": arb["notional_usd"],
                 "gross_profit_usd": arb["gross_profit_usd"],
@@ -723,6 +831,8 @@ def process_pair(
             "polymarket_price": result.get("polymarket_price"),
             "sum_price": result.get("sum_price"),
             "profit_pct": result.get("profit_pct"),
+            "apr_pct": arb.get("apr_pct", 0.0),
+            "days_to_close": arb.get("days_to_close", -1.0),
             "contracts": result.get("contracts"),
             "notional_usd": result.get("notional_usd"),
             "gross_profit_usd": result.get("gross_profit_usd"),
@@ -758,6 +868,8 @@ def run_once(
     tracked_pairs_csv: str,
     dry_run: bool = True,
     min_profit_pct: float = DEFAULT_MIN_PROFIT_PCT,
+    min_profit_floor_pct: float = DEFAULT_MIN_PROFIT_FLOOR_PCT,
+    min_apr_pct: float = DEFAULT_MIN_APR_PCT,
     min_liquidity_usd: float = DEFAULT_MIN_LIQUIDITY_USD,
     reverify_books: bool = DEFAULT_REVERIFY_BOOKS,
 ) -> None:
@@ -777,6 +889,8 @@ def run_once(
             pair_row=row,
             dry_run=dry_run,
             min_profit_pct=min_profit_pct,
+            min_profit_floor_pct=min_profit_floor_pct,
+            min_apr_pct=min_apr_pct,
             min_liquidity_usd=min_liquidity_usd,
             reverify_books=reverify_books,
         )
@@ -791,6 +905,8 @@ def main():
     parser.add_argument("--interval-minutes", type=int, default=DEFAULT_SLEEP_MINUTES, help="Minutes between refreshes")
     parser.add_argument("--live", action="store_true", help="Actually place orders")
     parser.add_argument("--min-profit-pct", type=float, default=DEFAULT_MIN_PROFIT_PCT, help="Minimum gross arb %%")
+    parser.add_argument("--min-profit-floor-pct", type=float, default=DEFAULT_MIN_PROFIT_FLOOR_PCT, help="Absolute floor for gross arb %%")
+    parser.add_argument("--min-apr-pct", type=float, default=DEFAULT_MIN_APR_PCT, help="Minimum annualised return %% for lower arbs")
     parser.add_argument("--min-liquidity-usd", type=float, default=DEFAULT_MIN_LIQUIDITY_USD, help="Minimum executable notional")
     parser.add_argument("--no-reverify", action="store_true", help="Skip last-second live book reverification")
     args = parser.parse_args()
@@ -803,6 +919,8 @@ def main():
             tracked_pairs_csv=args.input,
             dry_run=dry_run,
             min_profit_pct=args.min_profit_pct,
+            min_profit_floor_pct=args.min_profit_floor_pct,
+            min_apr_pct=args.min_apr_pct,
             min_liquidity_usd=args.min_liquidity_usd,
             reverify_books=reverify_books,
         )
@@ -820,6 +938,8 @@ def main():
                 tracked_pairs_csv=args.input,
                 dry_run=dry_run,
                 min_profit_pct=args.min_profit_pct,
+                min_profit_floor_pct=args.min_profit_floor_pct,
+                min_apr_pct=args.min_apr_pct,
                 min_liquidity_usd=args.min_liquidity_usd,
                 reverify_books=reverify_books,
             )
