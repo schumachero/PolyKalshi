@@ -73,8 +73,15 @@ def get_kalshi_orderbook(market_ticker, levels=DEFAULT_LEVELS):
         r = requests.get(url, timeout=REQUEST_TIMEOUT)
         r.raise_for_status()
         data = r.json()
+        
+        # Fetch market details for close_time
+        details_url = f"{KALSHI_BASE}/markets/{market_ticker}"
+        dr = requests.get(details_url, timeout=REQUEST_TIMEOUT)
+        dr.raise_for_status()
+        details = dr.json().get("market", {})
+        close_time = details.get("close_time")
     except Exception as e:
-        print(f"Error fetching Kalshi orderbook for {market_ticker}: {e}")
+        print(f"Error fetching Kalshi data for {market_ticker}: {e}")
         return {"yes": {"bids": [], "asks": []}, "no": {"bids": [], "asks": []}}
 
     book_info = data.get("orderbook_fp") or data.get("orderbook", {})
@@ -123,7 +130,8 @@ def get_kalshi_orderbook(market_ticker, levels=DEFAULT_LEVELS):
         "no": {
             "bids": no_bids[:levels],
             "asks": no_asks[:levels]
-        }
+        },
+        "close_time": close_time
     }
 
 def fetch_polymarket_market_exact(market_slug_or_id: str):
@@ -221,6 +229,7 @@ def get_polymarket_orderbook(market_ticker, levels=DEFAULT_LEVELS):
         return {
             "yes": yes_future.result(),
             "no": no_future.result(),
+            "close_time": market_data.get("closeTime") or market_data.get("endDate")
         }
     
     

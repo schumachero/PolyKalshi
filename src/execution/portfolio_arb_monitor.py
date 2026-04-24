@@ -51,10 +51,11 @@ EXECUTION_LOG_CSV = os.path.join(PROJECT_ROOT, "Data", "portfolio_arb_execution_
 
 DEFAULT_MAX_TRADE_USD = 20.0 
 DEFAULT_MIN_PROFIT_PCT = 6.5
-DEFAULT_MIN_PROFIT_FLOOR_PCT = 0.0 #(maybe have this?)
-DEFAULT_MIN_APR_PCT = 25.0
+DEFAULT_MIN_PROFIT_FLOOR_PCT = 0.3
+DEFAULT_MIN_CAGR_PCT = 30.0
 DEFAULT_MIN_LIQUIDITY_USD = 4.0
 DEFAULT_SLEEP_MINUTES = 30
+REINVESTMENT_LAG_DAYS = 2.0  # Settlement + redeployment buffer
 
 # Kalshi taker fee: 7% * p * (1 - p)  (in dollar terms, 0-1 scale)
 KALSHI_FEE_RATE = 0.07
@@ -147,11 +148,12 @@ def check_arb_thresholds(
     pair_row: pd.Series,
     min_profit_pct: float,
     min_profit_floor_pct: float,
-    min_apr_pct: float
+    min_cagr_pct: float,
+    live_close_time: Optional[str] = None
 ) -> dict:
     result = {
         "is_acceptable": False,
-        "apr_pct": 0.0,
+        "cagr_pct": 0.0,
         "days_to_close": -1.0
     }
 
@@ -159,14 +161,19 @@ def check_arb_thresholds(
         result["is_acceptable"] = True
 
     if not result["is_acceptable"] and profit_pct >= min_profit_floor_pct:
-        close_time_str = pair_row.get("close_time", "")
+        # Prioritize live_close_time from API, fall back to CSV
+        close_time_str = live_close_time or pair_row.get("close_time", "")
         if close_time_str and not pd.isna(close_time_str):
             try:
                 parsed_date = pd.to_datetime(close_time_str, utc=True)
                 delta_days = (parsed_date - datetime.now(timezone.utc)).total_seconds() / 86400.0
-                result["days_to_close"] = max(delta_days, 1.0)
-                result["apr_pct"] = profit_pct * (365.0 / result["days_to_close"])
-                if result["apr_pct"] >= min_apr_pct:
+                result["days_to_close"] = max(delta_days, 0.5)
+                # Lag-adjusted CAGR: compound over realistic reinvestment cycles
+                effective_days = result["days_to_close"] + REINVESTMENT_LAG_DAYS
+                cycles_per_year = 365.0 / effective_days
+                decimal_profit = profit_pct / 100.0
+                result["cagr_pct"] = ((1.0 + decimal_profit) ** cycles_per_year - 1.0) * 100.0
+                if result["cagr_pct"] >= min_cagr_pct:
                     result["is_acceptable"] = True
             except Exception:
                 pass
@@ -317,6 +324,7 @@ def get_yes_no_books_kalshi(ticker: str) -> dict:
     return {
         "yes_asks": yes_asks,
         "no_asks": no_asks,
+        "close_time": raw.get("close_time"),
         "raw": raw,
     }
 
@@ -328,6 +336,7 @@ def get_outcome_books_polymarket(slug: str, outcome_name: str) -> dict:
 
     return {
         "buy_levels": buy_levels,
+        "close_time": raw.get("close_time"),
         "raw": raw,
     }
 
@@ -395,7 +404,8 @@ def consume_dual_books(
 
         marginal_sum_price = pa + pb + fee_a + fee_b
 
-        # No arb at this marginal level anymore
+        # No arb at this marginal level anymore, should it really be 1.0? Should it not be
+        # the cut of of acceptable profit? 
         if marginal_sum_price >= 1.0:
             break
 
@@ -496,6 +506,9 @@ def choose_best_arb_for_pair(pair_row: pd.Series) -> dict:
     poly_no = get_outcome_books_polymarket(polymarket_slug, "NO")
     poly_yes = get_outcome_books_polymarket(polymarket_slug, "YES")
 
+    # Use the close_time from the platform if available, fallback to CSV later
+    live_close_time = kalshi_books.get("close_time") or poly_no.get("close_time") or poly_yes.get("close_time")
+
     candidate_yes_no = top_of_book_arb(
         kalshi_books["yes_asks"],
         poly_no["buy_levels"],
@@ -518,6 +531,7 @@ def choose_best_arb_for_pair(pair_row: pd.Series) -> dict:
         candidate_yes_no["kalshi_ticker"] = kalshi_ticker
         candidate_yes_no["polymarket_ticker"] = polymarket_slug
         candidate_yes_no["pm_category"] = pm_category
+        candidate_yes_no["live_close_time"] = live_close_time
         options.append(candidate_yes_no)
 
     if candidate_no_yes.get("found"):
@@ -526,6 +540,7 @@ def choose_best_arb_for_pair(pair_row: pd.Series) -> dict:
         candidate_no_yes["kalshi_ticker"] = kalshi_ticker
         candidate_no_yes["polymarket_ticker"] = polymarket_slug
         candidate_no_yes["pm_category"] = pm_category
+        candidate_no_yes["live_close_time"] = live_close_time
         options.append(candidate_no_yes)
 
     pair_id = normalize_str(
@@ -683,7 +698,7 @@ def process_pair(
     dry_run: bool = True,
     min_profit_pct: float = DEFAULT_MIN_PROFIT_PCT,
     min_profit_floor_pct: float = DEFAULT_MIN_PROFIT_FLOOR_PCT,
-    min_apr_pct: float = DEFAULT_MIN_APR_PCT,
+    min_cagr_pct: float = DEFAULT_MIN_CAGR_PCT,
     min_liquidity_usd: float = DEFAULT_MIN_LIQUIDITY_USD,
     reverify_books: bool = DEFAULT_REVERIFY_BOOKS,
 ) -> None:
@@ -708,30 +723,31 @@ def process_pair(
 
         eval_res = check_arb_thresholds(
             arb["profit_pct"], pair_row,
-            min_profit_pct, min_profit_floor_pct, min_apr_pct
+            min_profit_pct, min_profit_floor_pct, min_cagr_pct,
+            live_close_time=arb.get("live_close_time")
         )
 
         if not eval_res["is_acceptable"]:
             if eval_res["days_to_close"] > 0:
-                print(f"[{pair_id}] arb found but rejected: {arb['profit_pct']:.3f}% (APR: {eval_res['apr_pct']:.1f}%, days: {eval_res['days_to_close']:.1f})")
+                print(f"[{pair_id}] arb found but rejected: {arb['profit_pct']:.3f}% (CAGR: {eval_res['cagr_pct']:.1f}%, days: {eval_res['days_to_close']:.1f})")
             else:
                 print(f"[{pair_id}] arb found but below hard min profit: {arb['profit_pct']:.3f}%")
             return
 
-        arb["apr_pct"] = eval_res["apr_pct"]
+        arb["cagr_pct"] = eval_res["cagr_pct"]
         arb["days_to_close"] = eval_res["days_to_close"]
 
         if arb["notional_usd"] < min_liquidity_usd:
             print(f"[{pair_id}] arb found but insufficient liquidity: ${arb['notional_usd']:.2f}")
             return
 
-        apr_str = f" | APR {arb['apr_pct']:.1f}% (days: {arb['days_to_close']:.1f})" if arb["days_to_close"] > 0 else ""
+        cagr_str = f" | CAGR {arb['cagr_pct']:.1f}% (days: {arb['days_to_close']:.1f})" if arb["days_to_close"] > 0 else ""
         print(
             f"[{pair_id}] arb found | "
             f"Kalshi {arb['kalshi_side'].upper()} @ {arb['price_a']:.4f} + "
             f"Poly {arb['polymarket_outcome']} @ {arb['price_b']:.4f} = "
             f"{arb['sum_price']:.4f} | "
-            f"profit {arb['profit_pct']:.3f}%{apr_str} | "
+            f"profit {arb['profit_pct']:.3f}%{cagr_str} | "
             f"contracts {arb['contracts']:.4f} | "
             f"notional ${arb['notional_usd']:.2f} | "
             f"gross profit ${arb['gross_profit_usd']:.4f}"
@@ -755,7 +771,7 @@ def process_pair(
                     "polymarket_price": arb["price_b"],
                     "sum_price": arb["sum_price"],
                     "profit_pct": arb["profit_pct"],
-                    "apr_pct": arb["apr_pct"],
+                    "cagr_pct": arb["cagr_pct"],
                     "days_to_close": arb["days_to_close"],
                     "contracts": arb["contracts"],
                     "notional_usd": arb["notional_usd"],
@@ -766,16 +782,17 @@ def process_pair(
 
             live_eval = check_arb_thresholds(
                 live_arb["profit_pct"], pair_row,
-                min_profit_pct, min_profit_floor_pct, min_apr_pct
+                min_profit_pct, min_profit_floor_pct, min_cagr_pct,
+                live_close_time=live_arb.get("live_close_time")
             )
 
             if not live_eval["is_acceptable"]:
                 msg = f"reverified arb rejected: {live_arb['profit_pct']:.3f}%"
                 if live_eval["days_to_close"] > 0:
-                    msg += f" (APR: {live_eval['apr_pct']:.1f}%)"
+                    msg += f" (CAGR: {live_eval['cagr_pct']:.1f}%)"
                 print(f"[{pair_id}] {msg}")
                 return
-            live_arb["apr_pct"] = live_eval["apr_pct"]
+            live_arb["cagr_pct"] = live_eval["cagr_pct"]
             live_arb["days_to_close"] = live_eval["days_to_close"]
 
             if live_arb["notional_usd"] < min_liquidity_usd:
@@ -806,7 +823,7 @@ def process_pair(
                 "polymarket_price": arb["price_b"],
                 "sum_price": arb["sum_price"],
                 "profit_pct": arb["profit_pct"],
-                "apr_pct": arb.get("apr_pct", 0.0),
+                "cagr_pct": arb.get("cagr_pct", 0.0),
                 "days_to_close": arb.get("days_to_close", -1.0),
                 "contracts": arb["contracts"],
                 "notional_usd": arb["notional_usd"],
@@ -831,7 +848,7 @@ def process_pair(
             "polymarket_price": result.get("polymarket_price"),
             "sum_price": result.get("sum_price"),
             "profit_pct": result.get("profit_pct"),
-            "apr_pct": arb.get("apr_pct", 0.0),
+            "cagr_pct": arb.get("cagr_pct", 0.0),
             "days_to_close": arb.get("days_to_close", -1.0),
             "contracts": result.get("contracts"),
             "notional_usd": result.get("notional_usd"),
@@ -869,7 +886,7 @@ def run_once(
     dry_run: bool = True,
     min_profit_pct: float = DEFAULT_MIN_PROFIT_PCT,
     min_profit_floor_pct: float = DEFAULT_MIN_PROFIT_FLOOR_PCT,
-    min_apr_pct: float = DEFAULT_MIN_APR_PCT,
+    min_cagr_pct: float = DEFAULT_MIN_CAGR_PCT,
     min_liquidity_usd: float = DEFAULT_MIN_LIQUIDITY_USD,
     reverify_books: bool = DEFAULT_REVERIFY_BOOKS,
 ) -> None:
@@ -890,13 +907,14 @@ def run_once(
             dry_run=dry_run,
             min_profit_pct=min_profit_pct,
             min_profit_floor_pct=min_profit_floor_pct,
-            min_apr_pct=min_apr_pct,
+            min_cagr_pct=min_cagr_pct,
             min_liquidity_usd=min_liquidity_usd,
             reverify_books=reverify_books,
         )
 
 
 def main():
+    global REINVESTMENT_LAG_DAYS
     parser = argparse.ArgumentParser(
         description="Tracked-pairs-only portfolio arbitrage monitor/executor"
     )
@@ -906,7 +924,8 @@ def main():
     parser.add_argument("--live", action="store_true", help="Actually place orders")
     parser.add_argument("--min-profit-pct", type=float, default=DEFAULT_MIN_PROFIT_PCT, help="Minimum gross arb %%")
     parser.add_argument("--min-profit-floor-pct", type=float, default=DEFAULT_MIN_PROFIT_FLOOR_PCT, help="Absolute floor for gross arb %%")
-    parser.add_argument("--min-apr-pct", type=float, default=DEFAULT_MIN_APR_PCT, help="Minimum annualised return %% for lower arbs")
+    parser.add_argument("--min-cagr-pct", type=float, default=DEFAULT_MIN_CAGR_PCT, help="Minimum lag-adjusted CAGR %% for lower arbs")
+    parser.add_argument("--reinvestment-lag-days", type=float, default=REINVESTMENT_LAG_DAYS, help="Days between market resolution and capital redeployment")
     parser.add_argument("--min-liquidity-usd", type=float, default=DEFAULT_MIN_LIQUIDITY_USD, help="Minimum executable notional")
     parser.add_argument("--no-reverify", action="store_true", help="Skip last-second live book reverification")
     args = parser.parse_args()
@@ -914,13 +933,15 @@ def main():
     dry_run = not args.live
     reverify_books = not args.no_reverify
 
+    REINVESTMENT_LAG_DAYS = args.reinvestment_lag_days
+
     if not args.loop:
         run_once(
             tracked_pairs_csv=args.input,
             dry_run=dry_run,
             min_profit_pct=args.min_profit_pct,
             min_profit_floor_pct=args.min_profit_floor_pct,
-            min_apr_pct=args.min_apr_pct,
+            min_cagr_pct=args.min_cagr_pct,
             min_liquidity_usd=args.min_liquidity_usd,
             reverify_books=reverify_books,
         )
@@ -939,7 +960,7 @@ def main():
                 dry_run=dry_run,
                 min_profit_pct=args.min_profit_pct,
                 min_profit_floor_pct=args.min_profit_floor_pct,
-                min_apr_pct=args.min_apr_pct,
+                min_cagr_pct=args.min_cagr_pct,
                 min_liquidity_usd=args.min_liquidity_usd,
                 reverify_books=reverify_books,
             )
