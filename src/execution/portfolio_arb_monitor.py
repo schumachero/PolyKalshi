@@ -115,9 +115,7 @@ def top_of_book_arb(levels_a, levels_b, max_trade_usd, pm_category="Other / Gene
     fee_b = calculate_polymarket_fee(pb, pm_category)
 
     sum_price = pa + pb + fee_a + fee_b
-    if sum_price >= 1.0:
-        return {"found": False}
-
+    
     max_affordable_contracts = max_trade_usd / max(sum_price, 1e-12)
     contracts = min(sa, sb, max_affordable_contracts)
 
@@ -160,7 +158,7 @@ def check_arb_thresholds(
     if profit_pct >= min_profit_pct:
         result["is_acceptable"] = True
 
-    if not result["is_acceptable"] and profit_pct >= min_profit_floor_pct:
+    if not result["is_acceptable"]:
         # Prioritize live_close_time from API, fall back to CSV
         close_time_str = live_close_time or pair_row.get("close_time", "")
         if close_time_str and not pd.isna(close_time_str):
@@ -172,8 +170,15 @@ def check_arb_thresholds(
                 effective_days = result["days_to_close"] + REINVESTMENT_LAG_DAYS
                 cycles_per_year = 365.0 / effective_days
                 decimal_profit = profit_pct / 100.0
-                result["cagr_pct"] = ((1.0 + decimal_profit) ** cycles_per_year - 1.0) * 100.0
-                if result["cagr_pct"] >= min_cagr_pct:
+                
+                # Check for negative value before power to avoid complex numbers in python
+                if decimal_profit <= -1.0:
+                    result["cagr_pct"] = -100.0
+                else:
+                    result["cagr_pct"] = ((1.0 + decimal_profit) ** cycles_per_year - 1.0) * 100.0
+                
+                # Only mark acceptable if it hits both the profit floor and CAGR min
+                if profit_pct >= min_profit_floor_pct and result["cagr_pct"] >= min_cagr_pct:
                     result["is_acceptable"] = True
             except Exception:
                 pass
@@ -727,27 +732,27 @@ def process_pair(
             live_close_time=arb.get("live_close_time")
         )
 
-        if not eval_res["is_acceptable"]:
-            if eval_res["days_to_close"] > 0:
-                print(f"[{pair_id}] arb found but rejected: {arb['profit_pct']:.3f}% (CAGR: {eval_res['cagr_pct']:.1f}%, days: {eval_res['days_to_close']:.1f})")
-            else:
-                print(f"[{pair_id}] arb found but below hard min profit: {arb['profit_pct']:.3f}%")
-            return
-
         arb["cagr_pct"] = eval_res["cagr_pct"]
         arb["days_to_close"] = eval_res["days_to_close"]
 
         if arb["notional_usd"] < min_liquidity_usd:
-            print(f"[{pair_id}] arb found but insufficient liquidity: ${arb['notional_usd']:.2f}")
+            print(f"[{pair_id}] arb rejected due to insufficient liquidity: ${arb['notional_usd']:.2f}")
             return
 
         cagr_str = f" | CAGR {arb['cagr_pct']:.1f}% (days: {arb['days_to_close']:.1f})" if arb["days_to_close"] > 0 else ""
+        
+        cagr_print_msg = (f"[{pair_id}] arb found | "
+                          f"Kalshi {arb['kalshi_side'].upper()} @ {arb['price_a']:.4f} + "
+                          f"Poly {arb['polymarket_outcome']} @ {arb['price_b']:.4f} = "
+                          f"{arb['sum_price']:.4f} | "
+                          f"profit {arb['profit_pct']:.3f}%{cagr_str}")
+
+        if not eval_res["is_acceptable"]:
+            print(f"REJECTED: {cagr_print_msg}")
+            return
+            
         print(
-            f"[{pair_id}] arb found | "
-            f"Kalshi {arb['kalshi_side'].upper()} @ {arb['price_a']:.4f} + "
-            f"Poly {arb['polymarket_outcome']} @ {arb['price_b']:.4f} = "
-            f"{arb['sum_price']:.4f} | "
-            f"profit {arb['profit_pct']:.3f}%{cagr_str} | "
+            f"{cagr_print_msg} | "
             f"contracts {arb['contracts']:.4f} | "
             f"notional ${arb['notional_usd']:.2f} | "
             f"gross profit ${arb['gross_profit_usd']:.4f}"
