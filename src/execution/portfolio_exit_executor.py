@@ -38,7 +38,7 @@ DEFAULT_TRACKED_PAIRS_CSV = os.path.join(PROJECT_ROOT, "Data", "tracked_pairs.cs
 EXECUTION_LOG_CSV = os.path.join(PROJECT_ROOT, "Data", "portfolio_exit_execution_log.csv")
 
 DEFAULT_MIN_CONTRACTS_SELL = 4
-DEFAULT_MAX_CONTRACTS_SELL = 50
+DEFAULT_MAX_CONTRACTS_SELL = 500
 DEFAULT_CUTOFF_CENTS = 0.9899
 DEFAULT_SLEEP_MINUTES = 30
 
@@ -239,6 +239,11 @@ def process_portfolio_exits(
             
         if not (0 < polymarket_price < 1):
             print(f"[{pair_id}] Skipped: Polymarket raw price {polymarket_price:.4f} out of 0-1 bounds")
+            continue
+            
+        polymarket_required_usd = executable_contracts * polymarket_price
+        if polymarket_required_usd < 1.0:
+            print(f"[{pair_id}] Skipped: Polymarket required USD ${polymarket_required_usd:.2f} is below the API $1.00 Taker minimum")
             continue
         
         if dry_run:

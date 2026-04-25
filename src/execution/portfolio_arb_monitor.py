@@ -49,10 +49,10 @@ from arbitrage_calculator import (
 TRACKED_PAIRS_CSV = os.path.join(PROJECT_ROOT, "Data", "tracked_pairs.csv")
 EXECUTION_LOG_CSV = os.path.join(PROJECT_ROOT, "Data", "portfolio_arb_execution_log.csv")
 
-DEFAULT_MAX_TRADE_USD = 20.0 
+DEFAULT_MAX_TRADE_USD = 101
 DEFAULT_MIN_PROFIT_PCT = 6.5
 DEFAULT_MIN_PROFIT_FLOOR_PCT = 0.3
-DEFAULT_MIN_CAGR_PCT = 30.0
+DEFAULT_MIN_CAGR_PCT = 20.0
 DEFAULT_MIN_LIQUIDITY_USD = 4.0
 DEFAULT_SLEEP_MINUTES = 30
 REINVESTMENT_LAG_DAYS = 2.0  # Settlement + redeployment buffer
@@ -114,7 +114,10 @@ def top_of_book_arb(levels_a, levels_b, max_trade_usd, pm_category="Other / Gene
     fee_a = _kalshi_fee(pa)
     fee_b = calculate_polymarket_fee(pb, pm_category)
 
-    sum_price = pa + pb + fee_a + fee_b
+    poly_fee_rate = (fee_b / pb) if pb > 0 else 0.0
+    adjusted_pb = pb / (1.0 - poly_fee_rate) if poly_fee_rate < 1.0 else pb
+
+    sum_price = pa + adjusted_pb + fee_a
     
     max_affordable_contracts = max_trade_usd / max(sum_price, 1e-12)
     contracts = min(sa, sb, max_affordable_contracts)
@@ -250,8 +253,12 @@ def size_trade_to_available_balances(arb: dict) -> dict:
     kalshi_spendable = max(kalshi_available_usd - BALANCE_BUFFER_USD, 0.0)
     poly_spendable = max(polymarket_available_usd - BALANCE_BUFFER_USD, 0.0)
 
-    max_contracts_kalshi = int(math.floor(kalshi_spendable / max(arb["price_a"], 1e-12)))
-    max_contracts_poly = int(math.floor(poly_spendable / max(arb["price_b"], 1e-12)))
+    # Polymarket cost incorporates fees directly into the size
+    poly_fee_rate = (arb["fee_b"] / arb["price_b"]) if arb["price_b"] > 0 else 0.0
+    adjusted_pb = arb["price_b"] / (1.0 - poly_fee_rate) if poly_fee_rate < 1.0 else arb["price_b"]
+
+    max_contracts_kalshi = int(math.floor(kalshi_spendable / max(arb["price_a"] + arb["fee_a"], 1e-12)))
+    max_contracts_poly = int(math.floor(poly_spendable / max(adjusted_pb, 1e-12)))
 
     final_contracts = min(
         original_contracts,
@@ -271,11 +278,23 @@ def size_trade_to_available_balances(arb: dict) -> dict:
             "polymarket_available_usd": polymarket_available_usd,
         }
 
-    kalshi_required_usd = final_contracts * arb["price_a"]
-    polymarket_required_usd = final_contracts * arb["price_b"]
+    poly_fee_rate = (arb["fee_b"] / arb["price_b"]) if arb["price_b"] > 0 else 0.0
+    polymarket_order_size = final_contracts / (1.0 - poly_fee_rate) if poly_fee_rate < 1.0 else final_contracts
+
+    kalshi_required_usd = final_contracts * (arb["price_a"] + arb["fee_a"])
+    polymarket_required_usd = polymarket_order_size * arb["price_b"]
+
+    if polymarket_required_usd < 1.0:
+        return {
+            "ok": False,
+            "reason": f"Polymarket required USD ${polymarket_required_usd:.2f} is below the API $1.00 minimum",
+            "kalshi_available_usd": kalshi_available_usd,
+            "polymarket_available_usd": polymarket_available_usd,
+        }
 
     sized_arb = dict(arb)
     sized_arb["contracts"] = final_contracts
+    sized_arb["polymarket_order_size"] = polymarket_order_size
     sized_arb["notional_usd"] = final_contracts * arb["sum_price"]
     sized_arb["gross_profit_usd"] = final_contracts * (1.0 - arb["sum_price"])
 
@@ -648,6 +667,8 @@ def place_dual_orders(pair_row: pd.Series, arb: dict) -> dict:
 
     kalshi_price_cents = int(round(arb["price_a"] * 100))
     polymarket_price = round(arb["price_b"], 6)
+    
+    polymarket_order_size = round(arb.get("polymarket_order_size", contracts), 4)
 
     print(
         "BALANCE CHECK:",
@@ -658,7 +679,8 @@ def place_dual_orders(pair_row: pd.Series, arb: dict) -> dict:
             "polymarket_required_usd": round(balance_check["polymarket_required_usd"], 2),
             "max_contracts_kalshi": balance_check["max_contracts_kalshi"],
             "max_contracts_poly": balance_check["max_contracts_poly"],
-            "contracts_sent": contracts,
+            "contracts_sent_kalshi": contracts,
+            "contracts_sent_poly": polymarket_order_size,
         }
     )
 
@@ -674,7 +696,7 @@ def place_dual_orders(pair_row: pd.Series, arb: dict) -> dict:
     poly_resp = polymarket_place_limit_order(
         slug=polymarket_slug,
         outcome=arb["polymarket_outcome"],
-        size=contracts,
+        size=polymarket_order_size,
         price=polymarket_price,
         side="BUY",
         order_type="FOK",
