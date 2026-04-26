@@ -358,7 +358,8 @@ def main():
 
     while True:
         cycle_start = time.time()
-        print(f"\n\n########## LOOP ITERATION {iteration} ##########")
+        now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        print(f"\n\n########## [{now_str}] LOOP ITERATION {iteration} ##########")
         
         process_portfolio_exits(
             tracked_pairs_csv=args.input,

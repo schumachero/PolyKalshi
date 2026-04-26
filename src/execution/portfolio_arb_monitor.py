@@ -979,7 +979,8 @@ def main():
 
     while True:
         cycle_start = time.time()
-        print(f"\n########## TRACKED-PAIRS ARB ITERATION {iteration} ##########")
+        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        print(f"\n########## [{now_str}] TRACKED-PAIRS ARB ITERATION {iteration} ##########")
 
         try:
             run_once(
