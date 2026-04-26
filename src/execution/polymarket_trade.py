@@ -25,6 +25,7 @@ def build_client() -> ClobClient:
     if not POLY_FUNDER_ADDRESS:
         raise ValueError("Missing POLY_FUNDER_ADDRESS in .env")
 
+    print(f"[DEBUG] Building Polymarket Client | Signer: {POLY_FUNDER_ADDRESS} | Signature Type: {POLY_SIGNATURE_TYPE}")
     client = ClobClient(
         host=HOST,
         chain_id=CHAIN_ID,
