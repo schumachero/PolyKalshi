@@ -2,19 +2,22 @@ import math
 import sys
 import os
 
-# Lägg till src i path så vi kan importera din riktiga kod
-sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
+# Lägg till projektets rotmapp i Python Path
+sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..'))
+
 try:
-    from execution.portfolio_exit_executor import DEFAULT_CUTOFF_CENTS
+    from src.execution.portfolio_exit_executor import DEFAULT_CUTOFF_CENTS
+    from src.arbitrage_calculator import calculate_polymarket_fee
 except ImportError:
-    DEFAULT_CUTOFF_CENTS = 0.9999 # Fallback if import fails
+    # Om importer misslyckas på grund av filstrukturen
+    sys.path.append('src')
+    from execution.portfolio_exit_executor import DEFAULT_CUTOFF_CENTS
+    from arbitrage_calculator import calculate_polymarket_fee
 
 def calculate_mock_kalshi_fee(price):
     return 0.07 * price * (1.0 - price)
 
-def calculate_mock_poly_fee(price):
-    # Justerat för att matcha din kalkylerade avgift (ca 0.01 - 0.04 beroende på pris)
-    return 0.04 * (price * (1.0 - price))
+# Vi använder nu den RIKTIGA kalkylatorn för Poly-avgifter!
 
 def simulate_exit_scenario(name, k_holdings, p_holdings, k_bid, p_bid, k_vol, p_vol):
     cutoff = DEFAULT_CUTOFF_CENTS
@@ -22,7 +25,8 @@ def simulate_exit_scenario(name, k_holdings, p_holdings, k_bid, p_bid, k_vol, p_
     
     # 1. Beräkna avgifter
     k_fee = calculate_mock_kalshi_fee(k_bid)
-    p_fee = calculate_mock_poly_fee(p_bid)
+    # Vi använder kategorin 'Crypto' för att matcha dina BTC-marknader
+    p_fee = calculate_polymarket_fee(p_bid, "Crypto")
     
     k_net = k_bid - k_fee
     p_net = p_bid - p_fee
@@ -58,9 +62,10 @@ def simulate_exit_scenario(name, k_holdings, p_holdings, k_bid, p_bid, k_vol, p_
     print(f"Total utbetalning: ${executable * sum_net:.2f}")
 
 # --- KÖR TESTER MED DIN NYA CUTOFF ---
-print(f"Använder CURRENT_CUTOFF från koden: {DEFAULT_CUTOFF_CENTS}")
+print(f"Använder CURRENT_CUTOFF från koden: {DEFAULT_CUTOFF_CENTS}\n")
 
-simulate_exit_scenario("Hög vinst", 100, 100, 0.99, 0.02, 500, 500)
-simulate_exit_scenario("Gränsfall (Bör bli SKIP nu)", 100, 100, 0.97, 0.025, 500, 500)
-simulate_exit_scenario("BTC Tight (Bör bli SKIP nu)", 500, 500, 0.9650, 0.0300, 1000, 1000)
-simulate_exit_scenario("Galen Spread (Garanterat sälj)", 100, 100, 0.9990, 0.05, 500, 500)
+simulate_exit_scenario("A: Garanterat sälj (Hög marginal)", 100, 100, 0.9990, 0.05, 500, 500)
+simulate_exit_scenario("B: För få kontrakt (2 st)", 2, 2, 0.99, 0.05, 500, 500)
+simulate_exit_scenario("C: Under $1 på Poly (10 st @ $0.05)", 10, 10, 0.99, 0.05, 500, 500)
+simulate_exit_scenario("E: Poly Pris 1.9 cent ($0.0190)", 200, 200, 0.9850, 0.0190, 500, 500)
+simulate_exit_scenario("D: BTC Tight (Skip pga din cutoff)", 500, 500, 0.9650, 0.0300, 1000, 1000)

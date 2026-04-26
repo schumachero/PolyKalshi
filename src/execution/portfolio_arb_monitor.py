@@ -668,8 +668,12 @@ def place_dual_orders(pair_row: pd.Series, arb: dict) -> dict:
     kalshi_price_cents = int(round(arb["price_a"] * 100))
     polymarket_price = round(arb["price_b"], 6)
     
-    polymarket_order_size = round(arb.get("polymarket_order_size", contracts), 4)
-
+    # Calculate target notional, round it to 2 decimals (max allowed for maker amount)
+    # Then derive size back from it to ensure compliance.
+    target_notional = arb.get("polymarket_order_size", contracts) * polymarket_price
+    clean_notional = round(target_notional, 2)
+    polymarket_order_size = round(clean_notional / polymarket_price, 2)
+    
     print(
         "BALANCE CHECK:",
         {
