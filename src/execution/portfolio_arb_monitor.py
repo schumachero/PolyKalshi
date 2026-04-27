@@ -668,11 +668,29 @@ def place_dual_orders(pair_row: pd.Series, arb: dict) -> dict:
     kalshi_price_cents = int(round(arb["price_a"] * 100))
     polymarket_price = round(arb["price_b"], 6)
     
-    # Calculate target notional, round it to 2 decimals (max allowed for maker amount)
-    # Then derive size back from it to ensure compliance.
-    target_notional = arb.get("polymarket_order_size", contracts) * polymarket_price
-    clean_notional = round(target_notional, 2)
-    polymarket_order_size = round(clean_notional / polymarket_price, 2)
+    # Polymarket API constraints for BUY orders:
+    #   maker_amount (size * price) → max 2 decimal places
+    #   taker_amount (size)         → max 2 decimal places (per ROUNDING_CONFIG)
+    #
+    # The py_clob_client checks decimal places via Decimal(str(float_val)),
+    # so we must find a size where the *float* product is clean.
+    def _poly_clean_size(raw_size: float, price: float) -> float:
+        """Find largest size ≤ raw_size (step 0.01) where float(size*price) has ≤ 2 dp."""
+        from decimal import Decimal
+        sz = math.floor(raw_size * 100) / 100  # start at floor to 2 dp
+        for _ in range(200):  # max 200 steps down ($2 range)
+            if sz <= 0:
+                return 0.0
+            product = sz * price
+            dp = abs(Decimal(str(product)).as_tuple().exponent)
+            if dp <= 2:
+                return sz
+            sz = round(sz - 0.01, 2)
+        return 0.0
+    
+    polymarket_order_size = _poly_clean_size(
+        arb.get("polymarket_order_size", contracts), polymarket_price
+    )
     
     print(
         "BALANCE CHECK:",
