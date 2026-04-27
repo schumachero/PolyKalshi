@@ -16,7 +16,7 @@ REQUEST_TIMEOUT = 15
 
 POLY_PRIVATE_KEY = os.getenv("POLY_PRIVATE_KEY")
 POLY_FUNDER_ADDRESS = os.getenv("POLY_FUNDER_ADDRESS")
-POLY_SIGNATURE_TYPE = 1  # 0=EOA, 1/2=proxy-style setups
+POLY_SIGNATURE_TYPE = int(os.getenv("POLY_SIGNATURE_TYPE", "1"))  # 0=EOA, 1/2=proxy-style setups
 
 
 def build_client() -> ClobClient:
@@ -25,6 +25,7 @@ def build_client() -> ClobClient:
     if not POLY_FUNDER_ADDRESS:
         raise ValueError("Missing POLY_FUNDER_ADDRESS in .env")
 
+    print(f"[DEBUG] Building Polymarket Client | Signer: {POLY_FUNDER_ADDRESS} | Signature Type: {POLY_SIGNATURE_TYPE}")
     client = ClobClient(
         host=HOST,
         chain_id=CHAIN_ID,

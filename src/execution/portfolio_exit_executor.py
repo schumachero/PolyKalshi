@@ -38,8 +38,8 @@ DEFAULT_TRACKED_PAIRS_CSV = os.path.join(PROJECT_ROOT, "Data", "tracked_pairs.cs
 EXECUTION_LOG_CSV = os.path.join(PROJECT_ROOT, "Data", "portfolio_exit_execution_log.csv")
 
 DEFAULT_MIN_CONTRACTS_SELL = 4
-DEFAULT_MAX_CONTRACTS_SELL = 50
-DEFAULT_CUTOFF_CENTS = 0.9899
+DEFAULT_MAX_CONTRACTS_SELL = 500
+DEFAULT_CUTOFF_CENTS = 0.9999
 DEFAULT_SLEEP_MINUTES = 30
 
 # =========================================================
@@ -207,7 +207,12 @@ def process_portfolio_exits(
         sum_net_bid_price = k_bid_net + p_bid_net
         
         if sum_net_bid_price < cutoff_cents:
-            print(f"[{pair_id}] Skipped: Combined NET bid {sum_net_bid_price:.4f} (Raw: {sum_bid_price:.4f}) below cutoff {cutoff_cents:.4f}")
+            print(
+                f"[{pair_id}] Skipped | "
+                f"Raw Bid Sum: {sum_bid_price:.4f} | "
+                f"Fees: Kalshi: ${k_fee_dollar:.4f}, Poly: ${p_fee_dollar:.4f} (Cat: {pm_category}) | "
+                f"Net: {sum_net_bid_price:.4f} < Cutoff {cutoff_cents:.4f}"
+            )
             continue
             
         # Calculate exactly how many we can sell simultaneously
@@ -225,8 +230,8 @@ def process_portfolio_exits(
             
         print(
             f"\n[{pair_id}] EXIT TARGET HIT | "
-            f"Kalshi {k_side.upper()} BID @ {k_bid_price:.4f} (Net: {k_bid_net:.4f}) + "
-            f"Poly {p_side.upper()} BID @ {p_bid_price:.4f} (Net: {p_bid_net:.4f}) = "
+            f"Kalshi {k_side.upper()} BID @ {k_bid_price:.4f} (Fee: ${k_fee_dollar:.4f} -> Net: {k_bid_net:.4f}) + "
+            f"Poly {p_side.upper()} BID @ {p_bid_price:.4f} (Fee: ${p_fee_dollar:.4f} [{pm_category}] -> Net: {p_bid_net:.4f}) = "
             f"{sum_bid_price:.4f} RAW / {sum_net_bid_price:.4f} NET | Size: {executable_contracts}"
         )
         
@@ -239,6 +244,11 @@ def process_portfolio_exits(
             
         if not (0 < polymarket_price < 1):
             print(f"[{pair_id}] Skipped: Polymarket raw price {polymarket_price:.4f} out of 0-1 bounds")
+            continue
+            
+        polymarket_required_usd = executable_contracts * polymarket_price
+        if polymarket_required_usd < 1.0:
+            print(f"[{pair_id}] Skipped: Polymarket required USD ${polymarket_required_usd:.2f} is below the API $1.00 Taker minimum")
             continue
         
         if dry_run:
@@ -349,7 +359,8 @@ def main():
 
     while True:
         cycle_start = time.time()
-        print(f"\n\n########## LOOP ITERATION {iteration} ##########")
+        now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        print(f"\n\n########## [{now_str}] LOOP ITERATION {iteration} ##########")
         
         process_portfolio_exits(
             tracked_pairs_csv=args.input,
